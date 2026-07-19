@@ -59,6 +59,7 @@ if ($user_role === 'delivery') {
 
         // Global Branch Management
         window.currentBranch = localStorage.getItem('bloom_branch_id') || '<?php echo $_SESSION['branchId'] ?? 'main_branch'; ?>';
+        window.currentUserRole = '<?php echo $user_role; ?>';
         
         <?php if (isset($_SESSION['role']) && $_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'super-admin'): ?>
             window.currentBranch = '<?php echo $_SESSION['branchId'] ?? 'main_branch'; ?>';
@@ -146,10 +147,10 @@ if ($user_role === 'delivery') {
                     });
 
                     await batch.commit();
-                    console.log('Successfully expired Recycled Bouquet:', stock, 'pcs');
+                    console.log('Successfully deleted expired items.');
                 }
             } catch (err) {
-                console.error('Error auto-expiring Recycled Bouquet:', err);
+                console.error('Error handling expired items: ', err);
             }
         }
 
@@ -163,7 +164,8 @@ if ($user_role === 'delivery') {
 
     <style>
         :root {
-            --primary: #E91E63;
+            /* BRAND COLOR REMAP: Shifted from hot pink properties to brand logo amber yellow specs */
+            --primary: #F59E0B;
             --secondary: #7B79F2;
             --background: #FFFDF7;
             --accent: #FF5252;
@@ -178,8 +180,10 @@ if ($user_role === 'delivery') {
         .sidebar { width: 260px; height: 100vh; position: fixed; left: 0; top: 0; background: #fff; box-shadow: 2px 0 10px rgba(0,0,0,0.03); z-index: 100; overflow-y: auto; border-right: 1px solid #f0f0f0; }
         .main-content { margin-left: 260px; padding: 20px; }
         .sidebar-link { display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: var(--text-light); transition: 0.3s; text-decoration: none; font-weight: 600; font-size: 0.85rem; border-radius: 0 50px 50px 0; margin-right: 20px; margin-bottom: 2px; }
-        .sidebar-link:hover, .sidebar-link.active { background: rgba(233, 30, 99, 0.05); color: var(--primary); }
-        .sidebar-link.active { border-left: 4px solid var(--primary); background: rgba(233, 30, 99, 0.08); }
+        
+        /* UI FIX: Changed hover text and active background container tint from pink to soft yellow-amber cream */
+        .sidebar-link:hover, .sidebar-link.active { background: rgba(245, 158, 11, 0.05); color: var(--primary); }
+        .sidebar-link.active { border-left: 4px solid var(--primary); background: rgba(245, 158, 11, 0.08); }
         .sidebar-link i { font-size: 1.1rem; width: 20px; text-align: center; }
 
         .card { background: #fff; padding: 24px; border-radius: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; transition: 0.3s; }
@@ -206,7 +210,8 @@ if ($user_role === 'delivery') {
             <div style="height: 45px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px;">
                 <img src="assets/images/asset.png" alt="BLOOM" style="max-height: 100%; max-width: 100%; object-fit: contain;" onerror="this.src='assets/images/asset.jpg'">
             </div>
-            <p class="brand-font text-lg font-black tracking-widest text-[#E91E63]">BLOOMINOUS</p>
+            <!-- UI FIX: Realigned typography branding color matrix to brand amber-yellow -->
+            <p class="brand-font text-lg font-black tracking-widest text-[#F59E0B]">BLOOMINOUS</p>
             <p class="text-[9px] uppercase tracking-[0.3em] text-gray-400 font-bold mt-1">Management System</p>
         </a>
     </div>
@@ -219,6 +224,15 @@ if ($user_role === 'delivery') {
         <a href="order_management.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'order_management.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-shopping-bag"></i>
             <span>Orders</span>
+        </a>
+        <a href="preorder_reservation.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'preorder_reservation.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-calendar-days"></i>
+            <span>Pre-Order & Reservation</span>
+        </a>
+        <!-- Fraud Analytics Clickable Nav Entry with Active Icon Logic -->
+        <a href="fraud_analytics.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'fraud_analytics.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-user-secret"></i>
+            <span>Fraud Analytics</span>
         </a>
         <a href="product_management.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_management.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-box"></i>
@@ -287,7 +301,7 @@ if ($user_role === 'delivery') {
             
             <!-- Notification Dropdown -->
             <div id="notif-dropdown" class="hidden absolute right-0 mt-4 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 z-[200] overflow-hidden">
-                <div class="p-4 border-bottom border-gray-100 flex justify-between items-center">
+                <div class="p-4 border-b border-gray-100 flex justify-between items-center">
                     <h4 class="font-black text-xs uppercase tracking-widest text-gray-800">Notifications</h4>
                     <button id="clear-notifs" class="text-[10px] text-indigo-500 font-bold uppercase">Clear All</button>
                 </div>
@@ -300,7 +314,6 @@ if ($user_role === 'delivery') {
             <div class="relative">
                 <select id="branch-selector" onchange="setBranch(this.value)" <?php echo (isset($_SESSION['role']) && $_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'super-admin') ? 'disabled' : ''; ?> class="bg-gray-50 border border-gray-200 text-gray-700 text-[10px] font-black uppercase tracking-widest rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 appearance-none pr-8 cursor-pointer disabled:opacity-50">
                     <option value="main_branch">Main Branch</option>
-                    <!-- Other branches will be loaded via JS -->
                 </select>
                 <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
                     <i class="fa-solid fa-chevron-down text-[8px]"></i>
@@ -313,18 +326,8 @@ if ($user_role === 'delivery') {
 
                     // Load all branches from Firestore
                     db.collection('branches').get().then(snap => {
-                        // Clear existing except default if needed, or rebuild
                         selector.innerHTML = '';
                         
-                        // Add "All Branches" option if user is super admin
-                        // const adminEmail = "789jojoalvarado@gmail.com";
-                        // if (firebase.auth().currentUser && firebase.auth().currentUser.email === adminEmail) {
-                        //     const allOpt = document.createElement('option');
-                        //     allOpt.value = 'all';
-                        //     allOpt.text = 'All Branches (View Only)';
-                        //     selector.appendChild(allOpt);
-                        // }
-
                         snap.forEach(doc => {
                             const opt = document.createElement('option');
                             opt.value = doc.id;
@@ -346,8 +349,104 @@ if ($user_role === 'delivery') {
                     echo str_replace('-', ' ', $dispRole);
                 ?></p>
             </div>
-            <div class="w-10 h-10 rounded-xl <?php echo ($_SESSION['role'] ?? '') === 'super-admin' ? 'bg-gray-800 text-white' : 'bg-pink-100 text-pink-500'; ?> flex items-center justify-center font-black text-sm">
+            <!-- UI FIX: Remapped standard fallback profile layout avatar card background wrapper to a soft amber yellow background layout tint -->
+            <div class="w-10 h-10 rounded-xl <?php echo ($_SESSION['role'] ?? '') === 'super-admin' ? 'bg-gray-800 text-white' : 'bg-amber-100 text-amber-500'; ?> flex items-center justify-center font-black text-sm">
                 <?php echo strtolower(substr($_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'U', 0, 1)); ?>
             </div>
         </div>
     </div>
+
+    <!-- NOTIFICATION SYSTEM SCRIPT MATRIX INJECTION -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!window.db) return;
+
+            const bell = document.getElementById('notification-bell');
+            const dropdown = document.getElementById('notif-dropdown');
+            const countBadge = document.getElementById('notif-count');
+            const notifList = document.getElementById('notif-list');
+            const clearBtn = document.getElementById('clear-notifs');
+
+            // Toggle Dropdown Visibility Matrix
+            bell.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdown.classList.toggle('hidden');
+            });
+            document.addEventListener('click', () => dropdown.classList.add('hidden'));
+            dropdown.addEventListener('click', (e) => e.stopPropagation());
+
+            // Build dynamic live query targeting notification items
+            let notifQuery = db.collection('notifications');
+            
+            // SECURITY FILTER CONTEXT: If the user is a location-specific Admin, only show notifications matching their branchId.
+            // If the user is a Super Admin, do not clip by branchId—give them omniscient corporate overview insight telemetry.
+            if (window.currentUserRole !== 'super-admin') {
+                notifQuery = notifQuery.where('branchId', '==', window.currentBranch);
+            }
+
+            // Real-Time Listener Hook
+            notifQuery.orderBy('created_at', 'desc').limit(20).onSnapshot(snap => {
+                if (snap.empty) {
+                    notifList.innerHTML = `<div class="p-8 text-center text-gray-300 italic text-xs">No new notifications</div>`;
+                    countBadge.classList.add('hidden');
+                    countBadge.innerText = "0";
+                    return;
+                }
+
+                let unreadCount = 0;
+                let html = '';
+
+                snap.forEach(doc => {
+                    const n = doc.data();
+                    if (!n.read) unreadCount++;
+
+                    let icon = '<i class="fa-solid fa-circle-info text-blue-500"></i>';
+                    if (n.type === 'warning' || n.type === 'fraud') icon = '<i class="fa-solid fa-triangle-exclamation text-amber-500"></i>';
+                    if (n.type === 'success' || n.type === 'sale') icon = '<i class="fa-solid fa-circle-check text-green-500"></i>';
+
+                    html += `
+                        <div class="p-4 border-b border-gray-50 flex items-start gap-3 hover:bg-gray-50 transition-colors cursor-pointer ${!n.read ? 'bg-amber-50/20 font-medium' : ''}" onclick="markAsRead('${doc.id}')">
+                            <div class="mt-0.5 text-sm">${icon}</div>
+                            <div class="flex-1">
+                                <div class="text-xs text-gray-800 font-bold">${n.title || 'System Broadcast'}</div>
+                                <div class="text-[11px] text-gray-500 mt-0.5 leading-relaxed">${n.message || ''}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                notifList.innerHTML = html;
+
+                if (unreadCount > 0) {
+                    countBadge.innerText = unreadCount;
+                    countBadge.classList.remove('hidden');
+                } else {
+                    countBadge.classList.add('hidden');
+                }
+            }, err => console.error("Notification telemetry error: ", err));
+
+            // Mark a single notification document as read
+            window.markAsRead = async (id) => {
+                try {
+                    await db.collection('notifications').doc(id).update({ read: true });
+                } catch(e) { console.error("Update blocked: ", e); }
+            };
+
+            // Clear All notifications within the current user's scope
+            clearBtn.addEventListener('click', async () => {
+                try {
+                    let snapshot;
+                    if (window.currentUserRole === 'super-admin') {
+                        snapshot = await db.collection('notifications').get();
+                    } else {
+                        snapshot = await db.collection('notifications').where('branchId', '==', window.currentBranch).get();
+                    }
+
+                    if (snapshot.empty) return;
+                    const batch = db.batch();
+                    snapshot.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                } catch(e) { alert("Purge failed: " + e.message); }
+            });
+        });
+    </script>

@@ -2,7 +2,9 @@
 /**
  * BLOOMINOUS - Admin Dashboard (Firebase Spoke)
  */
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Sinisiguro na admin lamang ang makakapasok dito.
 if (!isset($_SESSION['admin_id'])) {
@@ -71,7 +73,6 @@ include 'templates/header.php';
         </div>
     </div>
 
-    <!-- REAL-TIME STAT CARDS -->
     <div class="insights-grid">
         <div class="stat-card bloom-pink" onclick="window.location.href='customer.php'">
             <i class="fas fa-users"></i>
@@ -93,25 +94,25 @@ include 'templates/header.php';
             <h1 id="stat-spoilage">...</h1>
             <p>Spoilage Value</p>
         </div>
-        <div class="stat-card bloom-indigo" style="background: linear-gradient(135deg, #6c5ce7, #a29bfe);">
+        <div class="stat-card bloom-indigo" style="background: linear-gradient(135deg, #6c5ce7, #a29bfe);" onclick="window.location.href='order_management.php'">
             <i class="fas fa-hourglass-start"></i>
             <h1 id="stat-pending">...</h1>
             <p>Pending Orders</p>
         </div>
-        <div class="stat-card bloom-teal" style="background: linear-gradient(135deg, #00b894, #55efc4);">
+        <div class="stat-card bloom-teal" style="background: linear-gradient(135deg, #00b894, #55efc4);" onclick="window.location.href='delivery_status.php'">
             <i class="fas fa-truck-fast"></i>
             <h1 id="stat-deliveries">...</h1>
             <p>Active Shipments</p>
         </div>
-        <div class="stat-card bloom-pink" style="background: linear-gradient(135deg, #fd79a8, #fab1a0);">
+        <div class="stat-card bloom-pink" style="background: linear-gradient(135deg, #fd79a8, #fab1a0);" onclick="window.location.href='product_management.php'">
             <i class="fas fa-warehouse"></i>
             <h1 id="stat-stock">...</h1>
             <p>Total Inventory</p>
         </div>
         <div class="stat-card bloom-orange" style="background: linear-gradient(135deg, #e17055, #ff7675);">
             <i class="fas fa-calendar-check"></i>
-            <h1 id="stat-session"><?php echo date('H:i'); ?></h1>
-            <p>System Time</p>
+            <h1 id="live-clock"><?php echo $_SESSION['admin_login_time'] ?? date('g:i A'); ?></h1>
+            <p>Session Login Time (PST)</p>
         </div>
     </div>
 

@@ -76,6 +76,27 @@ include 'templates/header.php';
                     <input type="text" id="imageUrl" class="form-control" placeholder="https://example.com/image.jpg">
                     <small style="color: #b2bec3; font-size: 0.7rem; margin-top: 5px; display: block;">Leave blank to use a default placeholder image.</small>
                 </div>
+
+                <div class="form-group" style="grid-column: span 2;">
+                    <label>3D Model Path (.glb URL / Optional)</label>
+                    <input type="text" id="modelUrl" class="form-control" placeholder="https://example.com/flower_model.glb">
+                    <small style="color: #b2bec3; font-size: 0.7rem; margin-top: 5px; display: block;">Link to a .glb file to enable AR immersive view in the mobile app.</small>
+                </div>
+
+                <div class="p-6 rounded-2xl border border-amber-100 bg-[#FFFBEB]" style="grid-column: span 2; margin-top: 10px;">
+                    <h3 class="font-bold text-[#F59E0B] text-sm flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Adding 3D Flower Models (Hyper3D.ai)
+                    </h3>
+                    <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                        You can easily add bespoke 3D flower arrangements to your inventory for immersive AR previews. No coding experience needed:
+                    </p>
+                    <ul class="list-disc list-inside text-xs text-gray-600 space-y-2">
+                        <li><strong>Step 1:</strong> Visit <a href="https://hyper3d.ai" target="_blank" class="underline font-bold text-[#F59E0B] hover:opacity-85">hyper3d.ai</a> to generate/sculpt your 3D flower asset.</li>
+                        <li><strong>Step 2:</strong> Download or export the model in <strong>.glb</strong> format.</li>
+                        <li><strong>Step 3:</strong> Upload the <code>.glb</code> file to any cloud storage or web server (e.g. Firebase, Github, Dropbox, Discord) to get a public URL.</li>
+                        <li><strong>Step 4:</strong> Paste that public URL into the <strong>3D Model Path (.glb URL)</strong> field above!</li>
+                    </ul>
+                </div>
             </div>
 
             <button type="submit" id="saveBtn" class="btn-primary w-full py-5 text-sm uppercase tracking-widest mt-6">
@@ -114,7 +135,7 @@ include 'templates/header.php';
                 branchId: window.currentBranch,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                model: "" 
+                model: document.getElementById('modelUrl').value || "" 
             });
             
             alert('Product added to inventory successfully!');

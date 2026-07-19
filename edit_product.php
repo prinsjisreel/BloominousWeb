@@ -88,6 +88,27 @@ include 'templates/header.php';
                             <option value="Single Stems">Single Stems</option>
                         </select>
                     </div>
+
+                    <div class="input-box">
+                        <label class="input-label">3D Model Path (.glb URL / Optional)</label>
+                        <input type="text" id="modelUrl" class="form-input" placeholder="https://example.com/flower_model.glb">
+                        <small style="color: #b2bec3; font-size: 0.7rem; margin-top: 5px; display: block;">Link to a .glb file to enable AR immersive view in the mobile app.</small>
+                    </div>
+
+                    <div class="p-6 rounded-2xl border border-amber-100 bg-[#FFFBEB] mt-6">
+                        <h3 class="font-bold text-[#F59E0B] text-xs flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Adding 3D Flower Models (Hyper3D.ai)
+                        </h3>
+                        <p class="text-[11px] text-gray-600 leading-relaxed mb-3">
+                            Easily design custom 3D flower models with <strong>hyper3d.ai</strong> (No coding required):
+                        </p>
+                        <ul class="list-disc list-inside text-[11px] text-gray-600 space-y-1.5">
+                            <li><strong>Step 1:</strong> Design/generate your flower model on <a href="https://hyper3d.ai" target="_blank" class="underline font-bold text-[#F59E0B] hover:opacity-85">hyper3d.ai</a>.</li>
+                            <li><strong>Step 2:</strong> Export the completed model in <strong>.glb</strong> format.</li>
+                            <li><strong>Step 3:</strong> Upload the <code>.glb</code> file to any cloud hosting service (Firebase, Dropbox, Discord, etc.) to get a public direct link.</li>
+                            <li><strong>Step 4:</strong> Paste the direct link in the <strong>3D Model Path</strong> field above!</li>
+                        </ul>
+                    </div>
                 </div>
 
                 <!-- Right Side -->
@@ -141,6 +162,7 @@ include 'templates/header.php';
             document.getElementById('category').value = p.category || 'Bouquets';
             document.getElementById('imageUrl').value = p.image || '';
             document.getElementById('imgPreview').src = p.image || 'https://picsum.photos/seed/flower/400/400';
+            document.getElementById('modelUrl').value = p.model || '';
         }
 
         document.getElementById('editProductForm').onsubmit = async (e) => {
@@ -159,6 +181,7 @@ include 'templates/header.php';
                     stock: parseInt(document.getElementById('stock').value),
                     category: document.getElementById('category').value,
                     image: document.getElementById('imageUrl').value || 'https://picsum.photos/seed/flower/400/400',
+                    model: document.getElementById('modelUrl').value || '',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 

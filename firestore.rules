@@ -5,45 +5,44 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
-
+    
     // --- Helpers ---
     function isSignedIn() {
       return request.auth != null;
     }
-    
+         
     function isEmailVerified() {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
-
+    
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
-
+    
     function getRole() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
-
+    
     function isAdmin() {
       return isSignedIn() && (
         getRole() == 'admin' || 
         getRole() == 'super-admin'
       );
     }
-
+    
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
-
+    
     function incoming() {
       return request.resource.data;
     }
-
+    
     function existing() {
       return resource.data;
     }
-
+    
     // --- Validation Blueprints ---
-
     function isValidOrder(data) {
       return data.user_id is string && 
              data.total_price is number && 
@@ -53,117 +52,124 @@ service cloud.firestore {
              (!('customer_name' in data) || (data.customer_name is string && data.customer_name.size() <= 256)) &&
              (!('phone' in data) || (data.phone is string && data.phone.size() <= 20));
     }
-
+    
     function isValidUser(data) {
       return data.email is string && 
              (!('username' in data) || data.username is string) &&
              (!('role' in data) || data.role in ['customer', 'admin', 'staff', 'employee', 'delivery']);
     }
-
+    
     // --- Collection Rules ---
-
-    // 1. Users Collection
+    
+    // 1. Users Collection (Management Console Profiles)
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isOwner(userId) && isValidUser(incoming()) && (
-        // Prevent self-elevating to admin/super-admin on self-registration
         (incoming().role == 'customer')
       );
       allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
-        // Prevent changing role if not admin
         (incoming().role == existing().role) || isAdmin()
       );
     }
-
-    // 2. Customers Collection (Alternative profile source)
+    
+    // 2. Customers Collection (E-Commerce Client Profiles)
     match /customers/{userId} {
       allow read: if true;
-      allow write: if isOwner(userId) || isAdmin() || !isSignedIn();
+      allow create: if isOwner(userId) && 
+                    !request.resource.data.keys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil']);
+      allow update: if (isOwner(userId) && 
+                       !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil'])) 
+                    || isAdmin();
+      allow delete: if isAdmin();
     }
-
-    // 6. Customer OTPs
+    
+    // 3. Customer OTPs
     match /customer_otps/{email} {
       allow read, write: if true;
     }
-
-    // 7. Suppliers Collection
+    
+    // 4. Blacklisted Emails Directory
+    match /blocked_emails/{email} {
+      allow read: if true;
+      allow write: if isAdmin() || isSignedIn(); 
+    }
+    
+    // 5. Suppliers Collection
     match /suppliers/{supplierId} {
       allow read, write: if true;
     }
-
-    // 8. Promos Collection
+    
+    // 6. Promos Collection
     match /promos/{promoId} {
       allow read, write: if true;
     }
-
-    // 9. Settings Collection
+    
+    // 7. Settings Collection
     match /settings/{settingsId} {
       allow read, write: if true;
     }
-
-    // 10. Notifications Collection
+    
+    // 8. Notifications Collection
     match /notifications/{notificationId} {
       allow read, write: if true;
     }
-
-    // 11. Freshness Analysis Collection
+    
+    // 9. Freshness Analysis Collection
     match /freshness_analysis/{analysisId} {
       allow read, write: if true;
     }
-
-    // 3. Branches Collection
+    
+    // 10. Branches Collection & Sub-collections
     match /branches/{branchId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
-
-      // Sub-collection: Inventory
+      
       match /inventory/{productId} {
         allow read: if isSignedIn();
         allow write: if isAdmin();
       }
-
-      // Sub-collection: Spoilage
       match /spoilage/{spoilageId} {
         allow read, write: if true;
       }
+      match /reservations/{reservationId} {
+        allow read, write: if true;
+      }
     }
-
-    // Collection Group rules (needed for db.collectionGroup queries)
+    
     match /{path=**}/inventory/{productId} {
       allow read: if isSignedIn();
     }
-
-    // 4. Orders Collection
+    
+    // 11. Orders Collection - FORTIFIED ENTRY GATE
     match /orders/{orderId} {
       allow get: if isOwner(existing().user_id) || isAdmin();
       allow list: if isSignedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
       
-      allow create: if isSignedIn() && isValidOrder(incoming()) && 
-                    isOwner(incoming().user_id) &&
-                    incoming().status == 'pending';
-
+      // SERVER-SIDE MITIGATION: Rejects checkout requests if the account is currently restricted
+      allow create: if isSignedIn() 
+                    && isValidOrder(incoming()) 
+                    && isOwner(incoming().user_id) 
+                    && incoming().status == 'pending'
+                    && get(/databases/$(database)/documents/customers/$(request.auth.uid)).data.isRestricted != true;
+                    
       allow update: if isSignedIn() && (
-        // Action: Cancel Order (Owner only if pending)
         (isOwner(existing().user_id) && 
-         existing().status == 'pending' && 
-         incoming().status == 'cancelled' &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt'])) ||
-        
-        // Action: Update Payment Status (via webhook or success redirect logic)
-        // Note: Success page updates status. We allow owner to update to 'paid' if it was pending.
-        (isOwner(existing().user_id) &&
-         incoming().status in ['processing', 'paid'] &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'payment_status', 'paidAt'])) ||
-
-        // Action: Admin Full Update
+          existing().status == 'pending' && 
+          incoming().status == 'cancelled' && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt'])) ||
+          
+        (isOwner(existing().user_id) && 
+          incoming().status in ['processing', 'paid'] && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'payment_status', 'paidAt'])) ||
+          
         isAdmin()
       );
       
       allow delete: if isAdmin();
     }
-
-    // 5. Connection Test
+    
+    // 12. Connection Test
     match /test/connection {
       allow read: if isSignedIn();
     }

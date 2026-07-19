@@ -6,7 +6,6 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,79 +14,66 @@ if (session_status() === PHP_SESSION_NONE) {
     <title>Join BloomShop - Register</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Cormorant+Garamond:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    
+         
     <style>
         :root {
-            --primary: #E91E63;
-            --secondary: #7B79F2;
+            --primary: #F59E0B;
+            --secondary: #121212;
             --bg: #FFFDF7;
             --text-main: #121212;
             --text-muted: #888888;
             --white: #ffffff;
-            --error: #E91E63;
+            --error: #FF5252;
         }
-
         body { 
-            font-family: 'Inter', sans-serif; 
-            background: var(--bg); 
-            display: flex; 
-            justify-content: center; 
-            align-items: center; 
-            min-height: 100vh; 
-            margin: 0; 
-            padding: 30px;
+             font-family: 'Inter', sans-serif; 
+             background: var(--bg); 
+             display: flex; 
+             justify-content: center; 
+             align-items: center; 
+             min-height: 100vh; 
+             margin: 0; 
+             padding: 30px;
         }
-
         .register-card { 
-            background: var(--white); 
-            padding: 50px; 
-            border-radius: 40px; 
-            box-shadow: 0 20px 60px rgba(233, 30, 99, 0.06); 
-            width: 100%; 
-            max-width: 500px; 
-            text-align: center; 
-            border: 1px solid rgba(233, 30, 99, 0.03);
-            position: relative;
+             background: var(--white); 
+             padding: 50px; 
+             border-radius: 40px; 
+             box-shadow: 0 20px 60px rgba(245, 158, 11, 0.06); 
+             width: 100%; 
+             max-width: 500px; 
+             text-align: center; 
+             border: 1px solid rgba(245, 158, 11, 0.03);
+             position: relative;
         }
-
         .brand-name { 
-            font-family: 'Cormorant Garamond', serif; 
-            font-size: 32px; 
-            font-weight: 900; 
-            letter-spacing: 4px; 
-            color: var(--primary); 
-            margin-bottom: 5px; 
-        }
-
+             font-family: 'Cormorant Garamond', serif; 
+             font-size: 32px; 
+             font-weight: 900; 
+             letter-spacing: 4px; 
+             color: var(--primary); 
+             margin-bottom: 5px; 
+         }
         h2 { 
-            font-family: 'Cormorant Garamond', serif; 
-            color: var(--text-main); 
-            margin-bottom: 5px; 
-            font-weight: 800; 
-            font-size: 32px; 
-        }
+             font-family: 'Cormorant Garamond', serif; 
+             color: var(--text-main); 
+             margin-bottom: 5px; 
+             font-weight: 800; 
+             font-size: 32px; 
+         }
         p.subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 35px; font-weight: 500; }
-
         .form-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 15px;
             text-align: left;
         }
-
         .form-group {
             position: relative;
             margin-bottom: 15px;
             text-align: left;
         }
-
         .full-width { grid-column: span 2; }
-
         .form-group i {
             position: absolute;
             left: 18px;
@@ -98,7 +84,6 @@ if (session_status() === PHP_SESSION_NONE) {
             transition: 0.3s;
             pointer-events: none;
         }
-
         label {
             display: block;
             font-size: 10px;
@@ -109,77 +94,74 @@ if (session_status() === PHP_SESSION_NONE) {
             margin-bottom: 6px;
             margin-left: 10px;
         }
-
         input, select { 
-            width: 100%; 
-            padding: 14px 15px 14px 45px; 
-            border: 1px solid #f0f0f0; 
-            border-radius: 15px; 
-            box-sizing: border-box; 
-            outline: none; 
-            transition: 0.3s; 
-            background: #fafafa; 
-            font-family: 'Inter';
+             width: 100%; 
+             padding: 14px 15px 14px 45px; 
+             border: 1px solid #f0f0f0; 
+             border-radius: 15px; 
+             box-sizing: border-box; 
+             outline: none; 
+             transition: 0.3s; 
+             background: #fafafa; 
+             font-family: 'Inter';
             font-weight: 500;
             color: var(--text-main);
             font-size: 0.85rem;
         }
-
         input:focus, select:focus { 
-            border-color: var(--primary); 
-            background: var(--white); 
-            box-shadow: 0 0 15px rgba(233, 30, 99, 0.05);
+             border-color: var(--primary); 
+             background: var(--white); 
+             box-shadow: 0 0 15px rgba(245, 158, 11, 0.05);
         }
-
         button { 
-            width: 100%; 
-            padding: 16px; 
-            background: var(--primary); 
-            color: white; 
-            border: none; 
-            border-radius: 15px; 
-            cursor: pointer; 
-            font-size: 14px; 
-            font-weight: 800; 
-            transition: 0.4s; 
-            margin-top: 15px; 
-            box-shadow: 0 8px 25px rgba(233, 30, 99, 0.2);
-            text-transform: uppercase;
-            letter-spacing: 2px;
+             width: 100%; 
+             padding: 16px; 
+             background: var(--primary); 
+             color: white; 
+             border: none; 
+             border-radius: 15px; 
+             cursor: pointer; 
+             font-size: 14px; 
+             font-weight: 800; 
+             transition: 0.4s; 
+             margin-top: 15px; 
+             box-shadow: 0 8px 25px rgba(245, 158, 11, 0.2);
+             text-transform: uppercase;
+             letter-spacing: 2px;
         }
-
         button:hover { 
-            background: #d81b60; 
-            transform: translateY(-3px);
-            box-shadow: 0 12px 30px rgba(233, 30, 99, 0.3); 
-        }
-
+             background: #d97706; 
+             transform: translateY(-3px);
+             box-shadow: 0 12px 30px rgba(217, 119, 6, 0.3); 
+         }
         .footer-link { margin-top: 30px; font-size: 0.85rem; color: var(--text-muted); font-weight: 500; }
         .footer-link a { color: var(--secondary); text-decoration: none; font-weight: 700; }
         .footer-link a:hover { text-decoration: underline; }
-
         .error-msg { 
-            background: #fff5f8; 
-            color: var(--error); 
-            padding: 12px; 
-            border-radius: 12px; 
-            font-size: 0.8rem; 
-            margin-bottom: 20px; 
-            border: 1px solid rgba(233, 30, 99, 0.1);
-            text-align: center; 
-            display: none; 
-            font-weight: 700;
-        }
+              background: #fff5f8; 
+              color: var(--error); 
+              padding: 12px; 
+              border-radius: 12px; 
+              font-size: 0.8rem; 
+              margin-bottom: 20px; 
+              border: 1px solid rgba(233, 30, 99, 0.1);
+             text-align: center; 
+              display: none; 
+              font-weight: 700;
+         }
     </style>
+    <!-- Firebase Dependencies -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
     <div class="register-card">
         <div class="brand-name">BLOOMINOUS</div>
         <h2>Create Account</h2>
         <p class="subtitle">Join our community of flower lovers</p>
-        
+                 
         <div id="error-box" class="error-msg"></div>
-
         <form id="register-form">
             <div class="form-grid">
                 <div class="form-group">
@@ -218,32 +200,29 @@ if (session_status() === PHP_SESSION_NONE) {
                 <div class="form-group full-width">
                     <label>Security Key</label>
                     <i class="fa-solid fa-lock"></i>
-                    <input type="password" id="password" placeholder="••••••••" required>
+                    <input type="password" id="password" placeholder=" " required>
                 </div>
             </div>
-            
+                         
             <button type="submit" id="register-btn">
-                <i class="fa-solid fa-user-plus mr-2"></i> Create Account
+                <i class="fa-solid fa-user-plus mr-2"></i> Join Experience
             </button>
         </form>
-
         <div class="footer-link">
             Belong here already? <a href="index.php">Sign In</a>
         </div>
     </div>
-
     <script>
         <?php
             $configPath = __DIR__ . '/firebase-applet-config.json';
             $config = file_exists($configPath) ? file_get_contents($configPath) : '{}';
             echo "const firebaseConfig = " . $config . ";";
         ?>
-        
+                 
         if (firebaseConfig.apiKey) {
             firebase.initializeApp(firebaseConfig);
             const auth = firebase.auth();
             const db = firebase.firestore();
-
             const registerForm = document.getElementById('register-form');
             const errorBox = document.getElementById('error-box');
 
@@ -254,10 +233,9 @@ if (session_status() === PHP_SESSION_NONE) {
                 const middleName = document.getElementById('middleName').value.trim();
                 const birthday = document.getElementById('birthday').value;
                 const sex = document.getElementById('sex').value;
-                const email = document.getElementById('email').value.trim();
+                const email = document.getElementById('email').value.trim().toLowerCase();
                 const password = document.getElementById('password').value;
                 const btn = document.getElementById('register-btn');
-
                 const fullName = (firstName + " " + (middleName ? middleName + " " : "") + lastName).trim();
 
                 btn.disabled = true;
@@ -265,9 +243,15 @@ if (session_status() === PHP_SESSION_NONE) {
                 errorBox.style.display = 'none';
 
                 try {
+                    // Security Enforcement Check: Block blacklisted emails from creating accounts
+                    const blocklistSnapshot = await db.collection('blocked_emails').doc(email).get();
+                    if (blocklistSnapshot.exists) {
+                        throw new Error("Security Restriction: This email address is permanently blacklisted due to automated fraud threshold failures.");
+                    }
+
+                    // Proceed with standard sign-up if clear
                     const userCredential = await auth.createUserWithEmailAndPassword(email, password);
                     const user = userCredential.user;
-
                     let role = 'customer';
 
                     const userData = {
@@ -285,16 +269,11 @@ if (session_status() === PHP_SESSION_NONE) {
                         created_at: firebase.firestore.FieldValue.serverTimestamp()
                     };
 
-                    if (role === 'admin') {
-                        await db.collection('users').doc(user.uid).set(userData);
-                    } else {
-                        // Matching Flutter's 'customers' schema
-                        await db.collection('customers').doc(user.uid).set({
-                            ...userData,
-                            password: password, // As seen in their previous schema
-                            name: fullName // legacy support
-                        });
-                    }
+                    await db.collection('customers').doc(user.uid).set({
+                        ...userData,
+                        password: password, 
+                        name: fullName 
+                    });
 
                     window.location.href = 'index.php?registered=success';
                 } catch (error) {

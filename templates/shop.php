@@ -57,6 +57,22 @@ if (!$user_id) {
     </div>
 </nav>
 
+<!-- HARDENED FRAUD INTERCEPTOR DYNAMIC WARNING BANNER -->
+<div id="shopFraudNoticeContainer" class="hidden max-w-7xl mx-auto mt-6 px-4">
+    <div class="w-full bg-red-50 border border-red-200 text-red-800 p-5 rounded-3xl flex items-center gap-4 shadow-sm">
+        <div class="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-red-600 flex-shrink-0 text-lg">
+            <i class="fa-solid fa-shield-virus animate-bounce"></i>
+        </div>
+        <div class="flex-1">
+            <h4 class="font-black uppercase text-xs tracking-wider">Security Protocol Restriction Triggered</h4>
+            <p class="text-xs font-semibold opacity-90 mt-0.5" id="shopFraudNoticeMessage"></p>
+        </div>
+        <button type="button" onclick="document.getElementById('shopFraudNoticeContainer').classList.add('hidden')" class="text-red-400 hover:text-red-700 transition-colors px-2">
+            <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+    </div>
+</div>
+
 <div class="shop-container">
     <div class="flex justify-between items-end mb-12">
         <div>
@@ -112,10 +128,6 @@ if (!$user_id) {
         navigator.geolocation.getCurrentPosition(pos => {
             userLat = pos.coords.latitude;
             userLng = pos.coords.longitude;
-            // Trigger a re-render if we already have products
-            if (Object.keys(allProducts).length > 0) {
-                // We'll let the onSnapshot handle it or just trigger manually if it's static
-            }
         }, err => {
             console.warn("Geolocation failed or denied:", err);
         }, { timeout: 5000 });
@@ -126,9 +138,20 @@ if (!$user_id) {
     document.addEventListener('DOMContentLoaded', () => {
         const grid = document.getElementById('product-grid');
 
+        // --- DEFENSIVE FIREWALL USER ALERT LOOP INTERCEPTOR ---
+        const fraudNoticeMsg = sessionStorage.getItem('bloom_shop_error');
+        if (fraudNoticeMsg) {
+            const noticeContainer = document.getElementById('shopFraudNoticeContainer');
+            const noticeText = document.getElementById('shopFraudNoticeMessage');
+            if (noticeContainer && noticeText) {
+                noticeText.innerText = fraudNoticeMsg;
+                noticeContainer.classList.remove('hidden');
+            }
+            sessionStorage.removeItem('bloom_shop_error'); // Wipe immediately to avoid looping notifications
+        }
+
         // Fetch from ALL branches to show cross-branch availability
         const loadProducts = () => {
-            // We'll fetch branches first, then fetch inventory for each to avoid needing a Firestore Collection Group Index
             db.collection('branches').onSnapshot(branchSnap => {
                 if (branchSnap.empty) {
                     grid.innerHTML = '<div class="col-span-full text-center py-20 text-gray-400 italic">No stores found.</div>';
@@ -145,7 +168,6 @@ if (!$user_id) {
                         lat: data.latitude || (data.location ? data.location.lat : null),
                         lng: data.longitude || (data.location ? data.location.lng : null)
                     };
-                    // Fetch active inventory for this branch
                     inventoryPromises.push(
                         b.ref.collection('inventory').where('stock', '>', 0).get().then(invSnap => {
                             return { branchId: b.id, docs: invSnap.docs };
@@ -284,7 +306,6 @@ if (!$user_id) {
         localStorage.setItem('bloom_cart', JSON.stringify(cart));
         updateCartUI();
         
-        // Show a little toast instead of alert
         const btn = event.target;
         const originalText = btn.innerText;
         btn.innerText = 'ADDED!';
@@ -301,10 +322,7 @@ if (!$user_id) {
     }
 
     function toggleCart() {
-        // Calculate total and save to session or just let checkout handle it from localStorage
         const total = Object.values(cart).reduce((sum, item) => sum + (item.price * item.qty), 0);
-        
-        // We'll use a form to POST the total if needed, or just let checkout.php read localStorage
         window.location.href = 'checkout.php?amount=' + total;
     }
 </script>

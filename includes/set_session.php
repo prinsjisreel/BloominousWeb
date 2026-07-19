@@ -12,6 +12,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($role === 'admin' || $role === 'super-admin' || $role === 'staff' || $role === 'employee') {
             $_SESSION['admin_id'] = $uid; // Using admin_id for both to simplify access to management pages
             $_SESSION['admin_name'] = $username;
+            
+            // CRITICAL UPDATE: Captures and saves the exact login timestamp into the session permanently
+            date_default_timezone_set('Asia/Manila');
+            $_SESSION['admin_login_time'] = date('g:i A');
         } else {
             $_SESSION['user_id'] = $uid;
             $_SESSION['username'] = $username;

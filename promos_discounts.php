@@ -43,6 +43,32 @@ include 'templates/header.php';
         </form>
     </div>
 
+    <!-- Loyalty Points Rules Configuration -->
+    <div style="background:white; padding:3rem; border-radius:35px; margin-bottom:3rem; border:2px solid #7B79F2; box-shadow: 0 15px 45px rgba(123, 121, 242, 0.05);">
+        <div class="flex items-center gap-3 mb-6" style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
+            <div style="background: rgba(123, 121, 242, 0.1); width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #7B79F2;">
+                <i class="fa-solid fa-star-half-stroke" style="font-size: 1.2rem;"></i>
+            </div>
+            <div>
+                <h4 class="brand-font text-2xl font-black text-gray-800" style="font-size: 1.5rem; font-weight: 800; margin: 0;">Loyalty Points Authority Rules</h4>
+                <p class="text-xs text-gray-400 font-medium" style="font-size: 0.75rem; color: #888; margin: 4px 0 0 0;">Configure maximum products a customer can purchase to earn custom loyalty points.</p>
+            </div>
+        </div>
+        <form id="loyaltyRulesForm" style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+            <div>
+                <label style="font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 8px; display: block; letter-spacing: 1px;">Max Eligible Products Limit</label>
+                <input type="number" id="maxProductsEligible" placeholder="e.g. 5" required style="width:100%; padding:14px 18px; border-radius:12px; border:1px solid #f0f0f0; outline: none; background:#fafafa; font-weight:600; font-size:0.9rem;">
+                <p style="font-size: 0.65rem; color: #aaa; margin-top: 4px; font-weight: 600;">The maximum number of flowers/products purchased to trigger reward points.</p>
+            </div>
+            <div>
+                <label style="font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 8px; display: block; letter-spacing: 1px;">Points Gained on Max Purchase</label>
+                <input type="number" id="pointsPerMaxPurchase" placeholder="e.g. 50" required style="width:100%; padding:14px 18px; border-radius:12px; border:1px solid #f0f0f0; outline: none; background:#fafafa; font-weight:600; font-size:0.9rem;">
+                <p style="font-size: 0.65rem; color: #aaa; margin-top: 4px; font-weight: 600;">The specific points given to the customer once they reach this item limit.</p>
+            </div>
+            <button type="submit" id="saveLoyaltyBtn" class="btn-primary" style="grid-column: span 2; padding: 18px; text-transform: uppercase; letter-spacing: 2px; font-size: 0.7rem; background: #7B79F2; box-shadow: 0 10px 20px rgba(123, 121, 242, 0.2);">Save Loyalty Configuration</button>
+        </form>
+    </div>
+
     <div id="promosList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:30px;">
         <div style="grid-column: 1 / -1; text-align: center; padding: 80px; color: #ddd; font-style: italic; font-weight: 500;">Retrieving privilege records...</div>
     </div>
@@ -88,6 +114,44 @@ include 'templates/header.php';
             });
             promosList.innerHTML = html;
         });
+
+        // Load Loyalty Point rules configuration in real-time
+        db.collection('settings').doc('loyalty_config').onSnapshot(doc => {
+            if (doc.exists) {
+                const data = doc.data();
+                document.getElementById('maxProductsEligible').value = data.max_products_eligible || 5;
+                document.getElementById('pointsPerMaxPurchase').value = data.points_per_max_purchase || 50;
+            } else {
+                // Initialize default config if missing
+                db.collection('settings').doc('loyalty_config').set({
+                    max_products_eligible: 5,
+                    points_per_max_purchase: 50,
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
+        });
+
+        // Save Loyalty Point rules configuration
+        document.getElementById('loyaltyRulesForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('saveLoyaltyBtn');
+            btn.disabled = true;
+            btn.innerText = 'Saving Configuration...';
+
+            try {
+                await db.collection('settings').doc('loyalty_config').set({
+                    max_products_eligible: parseInt(document.getElementById('maxProductsEligible').value),
+                    points_per_max_purchase: parseInt(document.getElementById('pointsPerMaxPurchase').value),
+                    updated_at: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                alert('Loyalty Rules Updated Successfully!');
+            } catch (err) {
+                alert('Error saving config: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Save Loyalty Configuration';
+            }
+        };
 
         document.getElementById('addPromoForm').onsubmit = async (e) => {
             e.preventDefault();

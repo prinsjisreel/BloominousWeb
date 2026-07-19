@@ -161,9 +161,9 @@ $order_id = $_GET['id'];
     <div class="max-w-7xl mx-auto px-6 flex justify-between items-center">
         <div class="flex items-center gap-2">
             <div style="height: 32px; display: flex; align-items: center; justify-content: center;">
-                <img src="assets/images/asset.jpg" alt="BLOOM" style="max-height: 100%; max-width: 100%; object-fit: contain;">
+                <img src="assets/images/asset.jpg" alt="BLOOMINOUS" style="max-height: 100%; max-width: 100%; object-fit: contain;">
             </div>
-            <h1 class="text-xl font-black italic tracking-tighter text-[#363949] hidden sm:block">BLOOM</h1>
+            <h1 class="text-xl font-black italic tracking-tighter text-[#363949] hidden sm:block">BLOOMINOUS</h1>
         </div>
         <div class="flex items-center gap-8 text-[11px] font-extrabold uppercase tracking-[2px] text-gray-400">
             <a href="templates/shop.php" class="hover:text-[#7B79F2] transition-colors">Shop</a>

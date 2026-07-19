@@ -161,7 +161,7 @@ include 'templates/header.php';
                             <button onclick="deleteAdmin('${id}')" class="delete-btn">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
-                        ` : `
+                         : 
                             <span style="color: #eee;" title="You cannot delete yourself"><i class="fa-solid fa-trash"></i></span>
                         `}
                     </td>
@@ -201,17 +201,87 @@ include 'templates/header.php';
             btn.disabled = true;
             btn.innerText = 'Creating...';
 
+            const rawUsername = document.getElementById('adminUser').value.trim().toLowerCase();
+            const password = document.getElementById('adminPass').value.trim();
+
+            // Construct valid email for Firebase Auth
+            const email = rawUsername.includes('@') ? rawUsername : ${rawUsername}@bloom.com;
+
+            let secondaryApp = null;
+            let secondaryAuth = null;
             try {
-                await db.collection('users').add({
-                    username: document.getElementById('adminUser').value,
+                // Initialize secondary app safely to avoid duplicate app errors or logging out the main admin
+                try {
+                    secondaryApp = firebase.app('SecondaryApp');
+                } catch (appErr) {
+                    secondaryApp = firebase.initializeApp(firebaseConfig, 'SecondaryApp');
+                }
+                secondaryAuth = secondaryApp.auth();
+                const userCredential = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+                const newUser = userCredential.user;
+
+                await db.collection('users').doc(newUser.uid).set({
+                    username: rawUsername,
+                    email: email,
                     role: 'admin',
                     created_at: firebase.firestore.FieldValue.serverTimestamp()
                 });
+
                 showSuccess('New admin added successfully!');
                 document.getElementById('addAdminForm').reset();
             } catch (err) {
-                showError('Error: ' + err.message);
+                if (err.code === 'auth/email-already-in-use') {
+                    try {
+                        let existingUid = null;
+                        
+                        // 1. Try to sign in using secondaryAuth to retrieve the UID
+                        try {
+                            const tempCredential = await secondaryAuth.signInWithEmailAndPassword(email, password);
+                            existingUid = tempCredential.user.uid;
+                        } catch (signInErr) {
+                            // If sign-in fails, let's query the 'customers' collection by email
+                            const customerQuery = await db.collection('customers').where('email', '==', email).limit(1).get();
+                            if (!customerQuery.empty) {
+                                existingUid = customerQuery.docs[0].id;
+                            } else {
+                                // Also check existing users collection by username or email
+                                const userQuery = await db.collection('users').where('username', '==', rawUsername).limit(1).get();
+                                if (!userQuery.empty) {
+                                    existingUid = userQuery.docs[0].id;
+                                } else {
+                                    const userEmailQuery = await db.collection('users').where('email', '==', email).limit(1).get();
+                                    if (!userEmailQuery.empty) {
+                                        existingUid = userEmailQuery.docs[0].id;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (existingUid) {
+                            await db.collection('users').doc(existingUid).set({
+                                username: rawUsername,
+                                email: email,
+                                role: 'admin',
+                                created_at: firebase.firestore.FieldValue.serverTimestamp()
+                            }, { merge: true });
+                            
+                            showSuccess('Existing admin account updated and registered successfully!');
+                            document.getElementById('addAdminForm').reset();
+                        } else {
+                            showError('Error: This admin account already exists in Firebase Authentication with a different password.');
+                        }
+                    } catch (updateErr) {
+                        showError('Error during update: ' + updateErr.message);
+                    }
+                } else {
+                    showError('Error: ' + err.message);
+                }
             } finally {
+                if (secondaryApp) {
+                    try {
+                        await secondaryApp.delete();
+                    } catch (secErr) {}
+                }
                 btn.disabled = false;
                 btn.innerText = 'Create Admin Account';
             }
