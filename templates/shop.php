@@ -97,6 +97,7 @@ if (!$user_id) {
     ?>
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    const userId = "<?php echo $user_id; ?>";
 
     // Branch Management
     window.currentBranch = localStorage.getItem('bloom_branch_id') || 'main_branch';
@@ -148,6 +149,33 @@ if (!$user_id) {
                 noticeContainer.classList.remove('hidden');
             }
             sessionStorage.removeItem('bloom_shop_error'); // Wipe immediately to avoid looping notifications
+        }
+
+        // --- LIVE ACCOUNT RESTRICTION LISTENER ---
+        // Watches the customer's own doc in real time so a restriction placed
+        // by an admin (fraud_analytics.php) or triggered automatically shows
+        // up immediately, without needing a page reload.
+        if (userId) {
+            db.collection('customers').doc(userId).onSnapshot(doc => {
+                if (!doc.exists) return;
+                const c = doc.data();
+                const noticeContainer = document.getElementById('shopFraudNoticeContainer');
+                const noticeText = document.getElementById('shopFraudNoticeMessage');
+                if (!noticeContainer || !noticeText) return;
+
+                if (c.isRestricted === true) {
+                    let remainingDaysText = "for 30 days";
+                    if (c.restrictedUntil) {
+                        const targetExpiry = c.restrictedUntil.toDate();
+                        const dynamicDays = Math.ceil((targetExpiry - new Date()) / (1000 * 60 * 60 * 24));
+                        if (dynamicDays > 0) remainingDaysText = `for the next ${dynamicDays} days`;
+                    }
+                    noticeText.innerText = `Your account was restricted ${remainingDaysText}. A verification code will be required to place an order.`;
+                    noticeContainer.classList.remove('hidden');
+                } else {
+                    noticeContainer.classList.add('hidden');
+                }
+            });
         }
 
         // Fetch from ALL branches to show cross-branch availability

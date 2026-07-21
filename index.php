@@ -26,10 +26,11 @@
         h2 { font-family: 'Cormorant Garamond', serif; color: var(--dark); font-size: 2.5rem; margin-bottom: 0.5rem; font-weight: 900; line-height: 1.1; }
         p.subtitle { color: #aaa; font-size: 0.9rem; margin-bottom: 3rem; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; }
                  
-        .error-msg { background: #fff5f8; color: var(--primary); padding: 1.2rem; border-radius: 20px; font-size: 0.8rem; margin-bottom: 2.5rem; border: 1px solid rgba(233,30,99,0.1); text-align: center; display: none; font-weight: 800; letter-spacing: 0.5px; }
+        .error-msg { background: #fef2f2; color: #DC2626; padding: 1.2rem; border-radius: 20px; font-size: 0.8rem; margin-bottom: 2.5rem; border: 1px solid rgba(220,38,38,0.15); text-align: center; display: none; font-weight: 800; letter-spacing: 0.5px; }
                  
         input { width: 100%; padding: 1.2rem 1.5rem; margin: 0.8rem 0; border: 1px solid #f0f0f0; border-radius: 20px; box-sizing: border-box; outline: none; transition: 0.4s; font-size: 1rem; background: #fafafa; font-weight: 600; color: var(--text-main); }
         input:focus { border-color: var(--primary); background: #fff; box-shadow: 0 10px 25px rgba(245, 158, 11, 0.05); }
+        input:disabled { background: #f3f3f3; color: #bbb; border-color: #eee; cursor: not-allowed; }
                  
         button { width: 100%; padding: 1.2rem; background: var(--primary); color: white; border: none; border-radius: 20px; cursor: pointer; font-size: 0.9rem; font-weight: 900; transition: 0.4s; margin-top: 2rem; box-shadow: 0 15px 35px rgba(245, 158, 11, 0.2); text-transform: uppercase; letter-spacing: 3px; }
         button:hover { background: #d97706; transform: translateY(-5px); box-shadow: 0 20px 45px rgba(217, 119, 6, 0.3); }
@@ -123,8 +124,100 @@
             const loginForm = document.getElementById('login-form');
             const errorBox = document.getElementById('error-box');
 
+            // --- Escalating lockout (client-side, per browser) ---
+            const LOCKOUT_KEY = 'bloom_login_lockout';
+            let lockoutCountdownInterval = null;
+
+            function getLockoutState() {
+                try {
+                    return JSON.parse(localStorage.getItem(LOCKOUT_KEY)) || { fails: 0, lockUntil: 0 };
+                } catch (e) {
+                    return { fails: 0, lockUntil: 0 };
+                }
+            }
+
+            function saveLockoutState(state) {
+                localStorage.setItem(LOCKOUT_KEY, JSON.stringify(state));
+            }
+
+            function clearLockoutState() {
+                localStorage.removeItem(LOCKOUT_KEY);
+            }
+
+            function lockDurationForFails(fails) {
+                const tier = Math.ceil(fails / 3); // 1st tier of 3 fails = tier 1, etc.
+                if (tier <= 1) return 30;
+                if (tier === 2) return 60;
+                return 120;
+            }
+
+            function setFormDisabled(disabled) {
+                document.getElementById('email').disabled = disabled;
+                document.getElementById('password').disabled = disabled;
+                document.getElementById('login-btn').disabled = disabled;
+            }
+
+            function startLockoutCountdown(lockUntil) {
+                setFormDisabled(true);
+                if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
+
+                const tick = () => {
+                    const remaining = Math.ceil((lockUntil - Date.now()) / 1000);
+                    if (remaining <= 0) {
+                        clearInterval(lockoutCountdownInterval);
+                        lockoutCountdownInterval = null;
+                        setFormDisabled(false);
+                        errorBox.style.display = 'none';
+                        const state = getLockoutState();
+                        state.lockUntil = 0;
+                        saveLockoutState(state);
+                    } else {
+                        errorBox.innerText = `Too many failed attempts. Please wait ${remaining}s`;
+                        errorBox.style.display = 'block';
+                    }
+                };
+                tick();
+                lockoutCountdownInterval = setInterval(tick, 1000);
+            }
+
+            function isCurrentlyLocked(state) {
+                return !!(state.lockUntil && state.lockUntil > Date.now());
+            }
+
+            function registerFailedAttempt() {
+                const state = getLockoutState();
+                state.fails += 1;
+                if (state.fails % 3 === 0) {
+                    const durationSec = lockDurationForFails(state.fails);
+                    state.lockUntil = Date.now() + durationSec * 1000;
+                    saveLockoutState(state);
+                    startLockoutCountdown(state.lockUntil);
+                } else {
+                    saveLockoutState(state);
+                }
+            }
+
+            function registerSuccessfulLogin() {
+                clearLockoutState();
+            }
+
+            // Re-check lock state on page load (refresh / navigate back doesn't reset it)
+            (function checkLockoutOnLoad() {
+                const state = getLockoutState();
+                if (isCurrentlyLocked(state)) {
+                    startLockoutCountdown(state.lockUntil);
+                }
+            })();
+
             loginForm.onsubmit = async (e) => {
                 e.preventDefault();
+
+                const lockState = getLockoutState();
+                if (isCurrentlyLocked(lockState)) {
+                    startLockoutCountdown(lockState.lockUntil);
+                    return;
+                }
+
                 const email = document.getElementById('email').value.trim();
                 const password = document.getElementById('password').value;
                 const btn = document.getElementById('login-btn');
@@ -246,6 +339,7 @@
                     });
 
                     if (response.ok) {
+                        registerSuccessfulLogin();
                         if (role === 'admin' || role === 'super-admin' || role === 'staff' || role === 'employee') {
                             window.location.href = 'admin.php';
                         } else if (role === 'delivery') {
@@ -257,10 +351,15 @@
                         throw new Error('Failed to establish session.');
                     }
                 } catch (error) {
-                    errorBox.innerText = error.message;
-                    errorBox.style.display = 'block';
-                    btn.disabled = false;
-                    btn.innerText = 'Login';
+                    console.error(error);
+                    registerFailedAttempt();
+                    const state = getLockoutState();
+                    if (!isCurrentlyLocked(state)) {
+                        errorBox.innerText = 'Invalid email or password';
+                        errorBox.style.display = 'block';
+                        btn.disabled = false;
+                        btn.innerText = 'Login';
+                    }
                 }
             };
 

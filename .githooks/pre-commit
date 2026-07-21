@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# BLOOM auto-versioning hook.
+# Runs right before every commit is finalized. Bumps version.json's
+# "patch" and "build" numbers and stamps the time, then stages the
+# updated file so it becomes part of the SAME commit that triggered it.
+
+VERSION_FILE="version.json"
+
+# Skip bumping on merge commits / if the file is missing something odd
+if [ ! -f "$VERSION_FILE" ]; then
+    echo '{"major":1,"minor":0,"patch":0,"build":0,"updated_at":null}' > "$VERSION_FILE"
+fi
+
+php -r '
+    $path = "version.json";
+    $data = json_decode(file_get_contents($path), true);
+    if (!is_array($data)) {
+        $data = ["major" => 1, "minor" => 0, "patch" => 0, "build" => 0];
+    }
+    $data["patch"] = ($data["patch"] ?? 0) + 1;
+    $data["build"] = ($data["build"] ?? 0) + 1;
+    $data["updated_at"] = date("Y-m-d H:i:s");
+    file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+'
+
+git add "$VERSION_FILE"

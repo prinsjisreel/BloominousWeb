@@ -179,7 +179,7 @@ if ($user_role === 'delivery') {
         
         .sidebar { width: 260px; height: 100vh; position: fixed; left: 0; top: 0; background: #fff; box-shadow: 2px 0 10px rgba(0,0,0,0.03); z-index: 100; overflow-y: auto; border-right: 1px solid #f0f0f0; }
         .main-content { margin-left: 260px; padding: 20px; }
-        .sidebar-link { display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: var(--text-light); transition: 0.3s; text-decoration: none; font-weight: 600; font-size: 0.85rem; border-radius: 0 50px 50px 0; margin-right: 20px; margin-bottom: 2px; }
+        .sidebar-link { display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: #000000; transition: 0.3s; text-decoration: none; font-weight: 600; font-size: 0.85rem; border-radius: 0 50px 50px 0; margin-right: 20px; margin-bottom: 2px; }
         
         /* UI FIX: Changed hover text and active background container tint from pink to soft yellow-amber cream */
         .sidebar-link:hover, .sidebar-link.active { background: rgba(245, 158, 11, 0.05); color: var(--primary); }
@@ -205,18 +205,18 @@ if ($user_role === 'delivery') {
 <body>
 
 <div class="sidebar">
-    <div class="p-8 text-center border-b border-gray-50 bg-white">
-        <a href="admin.php" class="inline-block">
+    <div class="pt-8 px-8 pb-4 text-center border-b border-gray-50 bg-white">
+        <a href="admin.php" class="inline-block no-underline" style="text-decoration: none;">
             <div style="height: 45px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px;">
                 <img src="assets/images/asset.png" alt="BLOOM" style="max-height: 100%; max-width: 100%; object-fit: contain;" onerror="this.src='assets/images/asset.jpg'">
             </div>
             <!-- UI FIX: Realigned typography branding color matrix to brand amber-yellow -->
-            <p class="brand-font text-lg font-black tracking-widest text-[#F59E0B]">BLOOMINOUS</p>
-            <p class="text-[9px] uppercase tracking-[0.3em] text-gray-400 font-bold mt-1">Management System</p>
+            <p class="m-0 brand-font text-lg font-black tracking-widest text-[#F59E0B] no-underline" style="text-decoration: none;">BLOOMINOUS</p>
+            <p class="m-0 text-[9px] uppercase tracking-[0.3em] text-gray-400 font-bold no-underline" style="text-decoration: none;">Management System</p>
         </a>
     </div>
 
-    <nav class="mt-6 px-2">
+    <nav class="mt-2 px-2">
         <a href="admin.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'admin.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-grid-2"></i>
             <span>Dashboard</span>
@@ -343,8 +343,8 @@ if ($user_role === 'delivery') {
         </div>
         <div class="flex items-center gap-3 border-l pl-6 border-gray-100">
             <div class="text-right">
-                <p class="text-xs font-bold text-gray-800"><?php echo $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'User'; ?></p>
-                <p class="text-[10px] text-gray-400 uppercase font-bold"><?php 
+                <p class="m-0 text-xs font-bold text-gray-800"><?php echo $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'User'; ?></p>
+                <p class="m-0 text-[10px] text-gray-400 uppercase font-bold"><?php 
                     $dispRole = $_SESSION['role'] ?? 'Member';
                     echo str_replace('-', ' ', $dispRole);
                 ?></p>

@@ -19,7 +19,7 @@ include 'templates/header.php';
 <style>
     .freshness-container { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .stat-card { background: #fff; border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 10px; border: 1px solid #f0f0f0; }
-    .ai-card-premium { background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); color: white; border-radius: 35px; padding: 3rem; position: relative; overflow: hidden; }
+    .ai-card-premium { background: linear-gradient(135deg, #FCD34D 0%, #F59E0B 55%, #B45309 100%); color: white; border-radius: 35px; padding: 3rem; position: relative; overflow: hidden; }
     .ai-card-premium::before { content: ''; position: absolute; top: -50%; right: -20%; width: 300px; height: 300px; background: rgba(255,255,255,0.1); border-radius: 50%; }
     
     .table-container { background: white; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
@@ -99,14 +99,14 @@ include 'templates/header.php';
                 <p class="text-white/80 text-sm font-medium">Monitoring station under command of <strong><?php echo $_SESSION['username'] ?? 'Nexus Admin'; ?></strong>.</p>
                 <div class="mt-8 p-6 bg-white/10 rounded-2xl border border-white/10 backdrop-blur-sm">
                     <p class="text-xs font-bold uppercase tracking-widest text-white/50 mb-2">Protocol 404</p>
-                    <p class="text-sm font-medium text-white/90">Stocks falling below <span class="text-pink-200">50% vitality</span> are prioritized for automated clearinghouse discounting.</p>
+                    <p class="text-sm font-medium text-white/90">Stocks falling below <span style="color: #FEF3C7; font-weight: 800;">50% vitality</span> are prioritized for automated clearinghouse discounting.</p>
                 </div>
             </div>
 
             <div class="bg-white rounded-[35px] text-center p-10 border border-gray-100 shadow-sm">
-                <div class="brand-font text-6xl font-black text-pink-500 mb-2">99.4%</div>
+                <div class="brand-font text-6xl font-black mb-2" style="color: var(--primary);">99.4%</div>
                 <div class="text-label">Inference Fidelity</div>
-                <div class="w-20 h-1 bg-pink-100 mx-auto my-8 rounded-full"></div>
+                <div class="w-20 h-1 mx-auto my-8 rounded-full" style="background: #FDE68A;"></div>
                 <p class="text-xs text-gray-400 font-medium leading-relaxed px-4">Our neural architecture is refined continuously by thousands of botanical data points across the archipelago.</p>
             </div>
         </div>

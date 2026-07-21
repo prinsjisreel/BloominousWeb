@@ -270,10 +270,22 @@
                 resetBtn.disabled = true;                 
                 resetBtn.innerText = 'Updating credentials...';                 
                 try {                     
-                    // 1. Core Native Update: Sends a native verification token link directly into the vault[cite: 7]
-                    await auth.sendPasswordResetEmail(targetUserEmail);
+                    // 1. REAL Auth update: the browser SDK cannot change another
+                    // user's Firebase Auth password directly, so this calls a
+                    // server-side endpoint that uses the Firebase Admin SDK,
+                    // which has the privileges to actually do it.
+                    const authUpdateResp = await fetch('update_firebase_password.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({ email: targetUserEmail, new_password: newPassword })
+                    });
+                    const authUpdateResult = await authUpdateResp.json();
+                    if (!authUpdateResult.success) {
+                        throw new Error(authUpdateResult.message || 'Failed to update Firebase Auth password.');
+                    }
 
-                    // 2. Firestore Sync Layer Update[cite: 7]
+                    // 2. Firestore Sync Layer Update - keep the mirrored plaintext
+                    // field in sync too, now that the REAL password has changed.
                     const batch = db.batch();                     
                     const usersRef = await db.collection('users').where('email', '==', targetUserEmail).get();                     
                     const custRefByEmail = await db.collection('customers').where('email', '==', targetUserEmail).get();                     
@@ -284,12 +296,12 @@
                     custRefByCustEmail.forEach(doc => { batch.update(doc.ref, { password: newPassword }); });                     
                     
                     await batch.commit();                     
-                    statusBox.innerText = "Password sync mapping finalized successfully! An additional configuration verification hyperlink has been sent to your Gmail address to verify your vault changes safely.";                     
+                    statusBox.innerText = "Password updated successfully! You can now log in with your new password.";                     
                     statusBox.className = 'status-msg success-layout';                     
                     statusBox.style.display = 'block';                     
                     setTimeout(() => {                         
                         window.location.href = 'index.php';                     
-                    }, 5000);                 
+                    }, 3000);                 
                 } catch (error) {                     
                     statusBox.innerText = "Update rejected: " + error.message;                     
                     statusBox.className = 'status-msg error-layout';                     

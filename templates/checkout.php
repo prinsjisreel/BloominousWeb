@@ -39,6 +39,10 @@ if ($amount <= 0 && empty($items)) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+
+    <!-- Leaflet (OpenStreetMap) - free, no API key needed, works on localhost -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     
     <style>
         :root {
@@ -142,6 +146,8 @@ if ($amount <= 0 && empty($items)) {
             border-radius: 16px;
             background-color: #e5e7eb;
             position: relative;
+            z-index: 0;
+            isolation: isolate;
             overflow: hidden;
             border: 1px solid #e2e8f0;
         }
@@ -233,27 +239,27 @@ if ($amount <= 0 && empty($items)) {
 
                     <!-- Interactive Google Map Box and GEO Pinner -->
                     <div class="mb-8 space-y-4">
-                        <div id="map-canvas">
-                            <div class="absolute inset-0 flex flex-col items-center justify-center bg-slate-100 text-gray-400 gap-2">
-                                <i class="fa-solid fa-map-location-dot text-4xl text-[#7B79F2]/40"></i>
-                                <span class="text-xs font-bold uppercase tracking-wider">Google Maps View Integration</span>
-                            </div>
-                        </div>
-                        
-                        <div class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
                             <div class="text-center sm:text-left">
-                                <h4 class="font-black text-[#363949] uppercase text-xs tracking-tight">GEO Location Sync Engine</h4>
-                                <p class="text-[10px] text-[#7d8da1] font-semibold mt-0.5">Pins live coordination tags to optimize regional route mapping</p>
+                                <h4 class="font-black text-[#363949] uppercase text-xs tracking-tight">Precise Delivery Location</h4>
+                                <p class="text-[10px] text-[#7d8da1] font-semibold mt-0.5">Get lower shipping fees by pinning your location</p>
                             </div>
                             <button type="button" id="getLocationBtn" class="px-5 py-3 bg-[#7B79F2] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#5a58d1] transition-all flex items-center gap-2 shadow-sm">
                                 <i class="fa-solid fa-location-crosshairs text-xs"></i>
-                                Locate My Position
+                                Update Location
                             </button>
                         </div>
 
                         <div id="locationStatus" class="hidden p-3 bg-green-50 text-green-600 rounded-xl text-[10px] font-bold text-center border border-green-100 flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-circle-check"></i>
-                            Coordinates Synced Successfully
+                            <i class="fa-solid fa-route"></i>
+                            <span id="locationStatusText">Estimated Route: 0.0km from branch</span>
+                        </div>
+
+                        <div id="map-canvas">
+                            <div id="mapPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-100 text-gray-400 gap-2">
+                                <i class="fa-solid fa-map-location-dot text-4xl text-[#7B79F2]/40"></i>
+                                <span class="text-xs font-bold uppercase tracking-wider">Google Maps View Integration</span>
+                            </div>
                         </div>
                         
                         <input type="hidden" id="customerLat">
@@ -413,11 +419,11 @@ if ($amount <= 0 && empty($items)) {
 
         // --- STRENGTHENED AND NORMALIZED PHONE PARSER ENGINE ---
         function normalizePhone(p) { 
-            let phone = (p || '').replace(/\D/g, ''); // Extract absolute numeric components only[cite: 1]
+            let phone = (p || '').replace(/\D/g, ''); // Extract absolute numeric components only
             if (phone.startsWith('0')) {
-                phone = '63' + phone.substring(1); // Standardized local mobile trunks to country matrix[cite: 1]
+                phone = '63' + phone.substring(1); // Standardized local mobile trunks to country matrix
             }
-            return '+' + phone; // Full E.164 verification standard alignment signature[cite: 1]
+            return '+' + phone; // Full E.164 verification standard alignment signature
         }
 
         let resendTimerInterval = null;
@@ -456,7 +462,7 @@ if ($amount <= 0 && empty($items)) {
         }
 
         async function startSmsVerification(rawPhone) {
-            const phone = normalizePhone(rawPhone); // Fully sanitizes inputs dynamically[cite: 1]
+            const phone = normalizePhone(rawPhone); // Fully sanitizes inputs dynamically
             const isTestNumber = testPhoneNumbers.includes(phone);
 
             const badge = document.getElementById('smsTestModeBadge');
@@ -513,6 +519,8 @@ if ($amount <= 0 && empty($items)) {
         // Setup coordinate indicators for Haversine evaluations
         let currentBranchLat = 14.7573;
         let currentBranchLng = 120.9439;
+        let currentBranchName = 'branch';
+        let leafletMap = null, leafletCustomerMarker = null, leafletBranchMarker = null, leafletLine = null;
 
         // Geolocation Engine
         document.getElementById('getLocationBtn').addEventListener('click', () => {
@@ -524,52 +532,106 @@ if ($amount <= 0 && empty($items)) {
             if (!navigator.geolocation) {
                 alert("Geolocation is not supported by your browser environment.");
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Locate My Position';
+                btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Update Location';
                 return;
             }
 
             navigator.geolocation.getCurrentPosition(
-                (position) => {
+                async (position) => {
                     const lat = position.coords.latitude;
                     const lng = position.coords.longitude;
 
                     document.getElementById('customerLat').value = lat;
                     document.getElementById('customerLng').value = lng;
 
-                    // Haversine Formulation Mapping to calculate approximate road distance metrics[cite: 2]
-                    const R = 6371; // Earth base radius metrics in km[cite: 2]
-                    const dLat = (lat - currentBranchLat) * Math.PI / 180;[cite: 2]
-                    const dLng = (lng - currentBranchLng) * Math.PI / 180;[cite: 2]
-                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +[cite: 2]
-                              Math.cos(currentBranchLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *[cite: 2]
-                              Math.sin(dLng/2) * Math.sin(dLng/2);[cite: 2]
-                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));[cite: 2]
-                    const distance = R * c;[cite: 2]
-
-                    document.getElementById('distanceDisplay').innerText = distance.toFixed(1) + ' KM';[cite: 2]
-                    
-                    // Update Dynamic Route Pricing Metrics[cite: 2]
-                    let shippingFee = 120.00;[cite: 2]
-                    if (distance > 10) {[cite: 2]
-                        shippingFee += Math.ceil(distance - 10) * 10; // Extra charge per KM past regional baseline limits[cite: 2]
+                    // Make sure branch data from the database has loaded, then pick the closest one
+                    await branchesLoadedPromise;
+                    const nearest = findNearestBranch(lat, lng);
+                    let distance;
+                    if (nearest) {
+                        currentBranchLat = nearest.branch.latitude;
+                        currentBranchLng = nearest.branch.longitude;
+                        currentBranchName = nearest.branch.name;
+                        nearestBranchId = nearest.branch.id;
+                        distance = nearest.distance;
+                    } else {
+                        // No branch data found in the database - fall back to the Haversine estimate vs the default branch
+                        distance = calculateDistance(lat, lng, currentBranchLat, currentBranchLng);
                     }
-                    document.getElementById('calculatedShipping').value = shippingFee;[cite: 2]
-                    document.getElementById('shippingDisplay').innerText = ' ' + shippingFee.toFixed(2);[cite: 2]
 
-                    statusDiv.classList.remove('hidden');[cite: 2]
-                    btn.disabled = false;[cite: 2]
-                    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Locate My Position';[cite: 2]
+                    document.getElementById('distanceDisplay').innerText = distance.toFixed(1) + ' KM';
                     
-                    renderCart();[cite: 2]
+                    // Update Dynamic Route Pricing Metrics
+                    let shippingFee = 120.00;
+                    if (distance > 10) {
+                        shippingFee += Math.ceil(distance - 10) * 10; // Extra charge per KM past regional baseline limits
+                    }
+                    document.getElementById('calculatedShipping').value = shippingFee;
+                    document.getElementById('shippingDisplay').innerText = ' ' + shippingFee.toFixed(2);
+
+                    document.getElementById('locationStatusText').innerText =
+                        'Estimated Route: ' + distance.toFixed(1) + 'km from ' + currentBranchName;
+                    statusDiv.classList.remove('hidden');
+                    renderLocationMap(lat, lng);
+
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Update Location';
+                    
+                    renderCart();
+
+                    // Refine with real driving-road distance when a Google Maps key is configured
+                    getRealRoadDistance(currentBranchLat, currentBranchLng, lat, lng).then(roadKm => {
+                        if (roadKm !== null) {
+                            document.getElementById('distanceDisplay').innerText = roadKm.toFixed(1) + ' KM';
+                            document.getElementById('locationStatusText').innerText =
+                                'Estimated Route: ' + roadKm.toFixed(1) + 'km from ' + currentBranchName;
+                            let refinedFee = 120.00;
+                            if (roadKm > 10) refinedFee += Math.ceil(roadKm - 10) * 10;
+                            document.getElementById('calculatedShipping').value = refinedFee;
+                            document.getElementById('shippingDisplay').innerText = ' ' + refinedFee.toFixed(2);
+                            renderCart();
+                        }
+                    });
                 },
-                (error) => {[cite: 2]
-                    alert("GPS Signal Loss: Unable to retrieve precise localization telemetry context. Check authorization parameters.");[cite: 2]
-                    btn.disabled = false;[cite: 2]
-                    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Locate My Position';[cite: 2]
+                (error) => {
+                    alert("GPS Signal Loss: Unable to retrieve precise localization telemetry context. Check authorization parameters.");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-location-crosshairs text-xs"></i> Update Location';
                 },
-                { enableHighAccuracy: true, timeout: 10000 }[cite: 2]
+                { enableHighAccuracy: true, timeout: 10000 }
             );
         });
+
+        // Renders a live map (customer pin -> nearest branch pin) via Leaflet/OpenStreetMap.
+        // This works with no API key at all, so it renders the same on localhost and in production.
+        function renderLocationMap(lat, lng) {
+            const canvas = document.getElementById('map-canvas');
+
+            if (!leafletMap) {
+                canvas.innerHTML = ''; // clear the placeholder
+                leafletMap = L.map(canvas, { zoomControl: true, attributionControl: true });
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap contributors'
+                }).addTo(leafletMap);
+            }
+
+            const customerPoint = [lat, lng];
+            const branchPoint = [currentBranchLat, currentBranchLng];
+
+            if (leafletCustomerMarker) leafletMap.removeLayer(leafletCustomerMarker);
+            if (leafletBranchMarker) leafletMap.removeLayer(leafletBranchMarker);
+            if (leafletLine) leafletMap.removeLayer(leafletLine);
+
+            leafletCustomerMarker = L.marker(customerPoint).addTo(leafletMap).bindPopup('Your location');
+            leafletBranchMarker = L.marker(branchPoint).addTo(leafletMap).bindPopup(currentBranchName);
+            leafletLine = L.polyline([customerPoint, branchPoint], { color: '#7B79F2', weight: 3, dashArray: '6 6' }).addTo(leafletMap);
+
+            leafletMap.fitBounds(leafletLine.getBounds(), { padding: [30, 30] });
+
+            // Leaflet needs a resize nudge since the container was just made visible/populated
+            setTimeout(() => leafletMap.invalidateSize(), 100);
+        }
 
         // Cart Rendering Engine
         function renderCart() {
@@ -711,7 +773,7 @@ if ($amount <= 0 && empty($items)) {
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Analyzing Security Protocols...';
             
             try {
-                // In-Memory Automated Velocity Verification Framework Checks[cite: 2]
+                // In-Memory Automated Velocity Verification Framework Checks
                 let accumulatedScoreBump = 10; 
                 let localFraudFlags = [];
                 let triggerAutoRestriction = false;
@@ -743,7 +805,7 @@ if ($amount <= 0 && empty($items)) {
                     triggerAutoRestriction = true; 
                 }
 
-                // Geographical Mismatch Evaluation Rules Engine[cite: 2]
+                // Geographical Mismatch Evaluation Rules Engine
                 const isGiftChecked = giftCheckbox.checked;
                 if (!isGiftChecked && customerLat && customerLng) {
                     const deviceToBranchDistance = calculateDistance(currentBranchLat, currentBranchLng, parseFloat(customerLat), parseFloat(customerLng));
@@ -826,7 +888,7 @@ if ($amount <= 0 && empty($items)) {
                     return;
                 }
 
-                // Create Order document manifest payload[cite: 2]
+                // Create Order document manifest payload
                 const finalTotal = subtotal + shippingFee;
                 const generatedOrderId = 'BLM-' + Date.now();
                 
@@ -838,7 +900,7 @@ if ($amount <= 0 && empty($items)) {
                     recipientPhone: phone,
                     email: document.getElementById('email').value,
                     address: fullStitchedAddress,
-                    phone: normalizePhone(phone), // Commit perfectly normalized telemetry strings[cite: 1]
+                    phone: normalizePhone(phone), // Commit perfectly normalized telemetry strings
                     payment_method: paymentMethod,
                     items: items,
                     subtotal: subtotal,
@@ -1036,15 +1098,33 @@ if ($amount <= 0 && empty($items)) {
 
         // Branch Tracking & Haversine Distance Logic
         let allBranches = [];
-        db.collection('branches').get().then(snap => {
+        let nearestBranchId = assignedBranchId;
+        const branchesLoadedPromise = db.collection('branches').get().then(snap => {
             snap.forEach(doc => { 
-                allBranches.push({ id: doc.id, ...doc.data() }); 
+                const d = doc.data();
+                allBranches.push({ id: doc.id, name: d.name || doc.id, latitude: d.latitude, longitude: d.longitude });
                 if (doc.id === assignedBranchId) {
-                    currentBranchLat = doc.data().latitude || currentBranchLat;
-                    currentBranchLng = doc.data().longitude || currentBranchLng;
+                    currentBranchLat = d.latitude || currentBranchLat;
+                    currentBranchLng = d.longitude || currentBranchLng;
+                    currentBranchName = d.name || d.location || assignedBranchId;
                 }
             });
-        });
+        }).catch(() => {});
+
+        // Finds the branch (from the branches loaded from the database) closest to a given point
+        function findNearestBranch(lat, lng) {
+            let nearest = null;
+            let nearestDist = Infinity;
+            allBranches.forEach(b => {
+                if (typeof b.latitude !== 'number' || typeof b.longitude !== 'number') return;
+                const d = calculateDistance(lat, lng, b.latitude, b.longitude);
+                if (d < nearestDist) {
+                    nearestDist = d;
+                    nearest = b;
+                }
+            });
+            return nearest ? { branch: nearest, distance: nearestDist } : null;
+        }
     }
 </script>
 </body>
