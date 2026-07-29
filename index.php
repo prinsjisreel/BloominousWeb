@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="assets/script/device_fingerprint.js"></script>
     <style>
         :root {
             --primary: #F59E0B;
@@ -124,6 +125,15 @@
             const loginForm = document.getElementById('login-form');
             const errorBox = document.getElementById('error-box');
 
+            // Registration just redirected here after creating the account
+            // and sending the confirmation email - tell the person to go
+            // check their inbox before they try logging in.
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('registered') === 'verify_pending') {
+                errorBox.innerText = 'Account created! Check your email (and spam folder) for a confirmation link before logging in.';
+                errorBox.style.display = 'block';
+            }
+
             // --- Escalating lockout (client-side, per browser) ---
             const LOCKOUT_KEY = 'bloom_login_lockout';
             let lockoutCountdownInterval = null;
@@ -235,20 +245,27 @@
                         const userCredential = await auth.signInWithEmailAndPassword(email, password);
                         targetUser = userCredential.user;
                     } catch (authError) {
-                        // 2. FALLBACK INTERCEPTOR LOGIC: If Firebase Auth rejects with wrong-password code, 
-                        // execute an absolute cross-check query against the plaintext fields in Firestore[cite: 3, 5]
-                        if (authError.code === 'auth/wrong-password' || authError.code === 'auth/user-not-found') {
-                            
-                            const usersQuery = await db.collection('users').where('email', '==', email.toLowerCase()).get();
+                        // 2. FALLBACK INTERCEPTOR LOGIC: modern Firebase Auth merges
+                        // wrong-password and user-not-found into a single
+                        // 'auth/invalid-credential' code (email enumeration
+                        // protection), so we check for that instead of the
+                        // legacy codes, which are no longer thrown.
+                        if (authError.code === 'auth/invalid-credential' || authError.code === 'auth/wrong-password' || authError.code === 'auth/user-not-found') {
+
+                            // NOTE: intentionally NOT querying 'users' here.
+                            // firestore.rules only allows `list` on /users to
+                            // admins, and this code runs while unauthenticated
+                            // (login just failed) - that query can never
+                            // succeed and previously threw its own
+                            // "Missing or insufficient permissions" error on
+                            // top of the real one. /customers allows public
+                            // read, so only that collection is checked.
                             const custQuery = await db.collection('customers').where('email', '==', email.toLowerCase()).get();
                             const custFallbackQuery = await db.collection('customers').where('custEmail', '==', email.toLowerCase()).get();
 
                             let matchedDoc = null;
 
-                            if (!usersQuery.empty) {
-                                matchedDoc = usersQuery.docs[0];
-                                matchedCollection = 'users';
-                            } else if (!custQuery.empty) {
+                            if (!custQuery.empty) {
                                 matchedDoc = custQuery.docs[0];
                                 matchedCollection = 'customers';
                             } else if (!custFallbackQuery.empty) {
@@ -279,12 +296,26 @@
                     let userData = userDocData || (existsInUsers ? userDoc.data() : null);
 
                     if (!existsInUsers && matchedCollection !== 'users') {
-                        const emailQuery = await db.collection('users').where('email', '==', targetUser.email.toLowerCase()).limit(1).get();
-                        if (!emailQuery.empty) {
-                            userDoc = emailQuery.docs[0];
-                            userData = userDoc.data();
-                            existsInUsers = true;
-                            await db.collection('users').doc(userDoc.id).update({ uid: targetUser.uid });
+                        // Ordinary customers were never written into /users
+                        // (only /customers), so this lookup denying with
+                        // "permission-denied" here is the EXPECTED outcome,
+                        // not a real error - firestore.rules only allows
+                        // `list` on /users to admins. Treat that specific
+                        // failure as "not an admin account" and keep going
+                        // as a customer, instead of crashing the whole login.
+                        try {
+                            const emailQuery = await db.collection('users').where('email', '==', targetUser.email.toLowerCase()).limit(1).get();
+                            if (!emailQuery.empty) {
+                                userDoc = emailQuery.docs[0];
+                                userData = userDoc.data();
+                                existsInUsers = true;
+                                await db.collection('users').doc(userDoc.id).update({ uid: targetUser.uid });
+                            }
+                        } catch (usersLookupError) {
+                            if (usersLookupError.code !== 'permission-denied') {
+                                throw usersLookupError;
+                            }
+                            // permission-denied => not an admin/staff account, proceed as customer
                         }
                     }
 
@@ -325,24 +356,104 @@
                         }
                     }
 
-                    // Transmit session configurations into the local PHP environment wrapper[cite: 3]
+                    // Only send a proof of identity (the ID token). The server
+                    // verifies it and looks up uid/role/username itself —
+                    // it no longer trusts anything the client claims here.
+                    const idToken = await targetUser.getIdToken();
+                    const deviceHash = await window.bloomGetDeviceId();
                     const formData = new FormData();
-                    formData.append('uid', targetUser.uid);
-                    formData.append('email', targetUser.email);
-                    formData.append('role', role);
-                    formData.append('username', username);
-                    formData.append('branchId', finalBranchId);
+                    formData.append('idToken', idToken);
+                    formData.append('deviceHash', deviceHash);
 
-                    const response = await fetch('includes/set_session.php', {
+                    let response = await fetch('includes/set_session.php', {
                         method: 'POST',
                         body: formData
                     });
+                    let sessionResult = await response.json();
 
-                    if (response.ok) {
+                    // Correct credentials, but this account was created after
+                    // the email-verification feature shipped and hasn't
+                    // clicked its confirmation link yet. This is NOT a wrong
+                    // password/lockout situation, so we handle it here and
+                    // return early instead of falling through to the
+                    // generic catch block (which would count it as a failed
+                    // login attempt and show a misleading error).
+                    if (!response.ok && sessionResult.code === 'EMAIL_NOT_VERIFIED') {
+                        errorBox.innerHTML = (sessionResult.message || 'Please verify your email before logging in.') +
+                            ' <button type="button" id="resend-verify-btn" style="text-decoration:underline;background:none;border:none;color:inherit;cursor:pointer;padding:0;font:inherit;">Resend verification email</button>';
+                        errorBox.style.display = 'block';
+
+                        const resendBtn = document.getElementById('resend-verify-btn');
+                        if (resendBtn) {
+                            resendBtn.onclick = async () => {
+                                resendBtn.disabled = true;
+                                resendBtn.innerText = 'Sending...';
+                                try {
+                                    const resendIdToken = await targetUser.getIdToken();
+                                    const resendResp = await fetch('send_verification_email.php', {
+                                        method: 'POST',
+                                        headers: { 'Authorization': 'Bearer ' + resendIdToken }
+                                    });
+                                    const resendResult = await resendResp.json();
+                                    if (!resendResp.ok || !resendResult.success) {
+                                        throw new Error(resendResult.message || 'Could not resend.');
+                                    }
+                                    resendBtn.innerText = 'Sent! Check your inbox.';
+                                } catch (resendError) {
+                                    resendBtn.innerText = 'Could not resend - try again shortly.';
+                                    resendBtn.disabled = false;
+                                }
+                            };
+                        }
+
+                        btn.disabled = false;
+                        btn.innerText = 'Login';
+                        return;
+                    }
+
+                    // This account is already flagged and we don't recognize
+                    // this device — walk the user through an email code
+                    // before trying set_session.php again.
+                    if (!response.ok && sessionResult.code === 'DEVICE_VERIFICATION_REQUIRED') {
+                        const sendResp = await fetch('send_device_otp.php', {
+                            method: 'POST',
+                            headers: { 'Authorization': 'Bearer ' + idToken },
+                            body: new URLSearchParams({ deviceHash })
+                        });
+                        const sendResult = await sendResp.json();
+                        if (!sendResult.success) {
+                            throw new Error(sendResult.message || 'Could not send verification email.');
+                        }
+
+                        const code = prompt('This device isn\'t recognized on this flagged account. Enter the 6-digit code we just emailed you:');
+                        if (!code) {
+                            throw new Error('Device verification cancelled.');
+                        }
+
+                        const verifyResp = await fetch('verify_device_otp.php', {
+                            method: 'POST',
+                            headers: { 'Authorization': 'Bearer ' + idToken },
+                            body: new URLSearchParams({ deviceHash, code })
+                        });
+                        const verifyResult = await verifyResp.json();
+                        if (!verifyResult.success) {
+                            throw new Error(verifyResult.message || 'Incorrect or expired code.');
+                        }
+
+                        formData.append('deviceOtpVerified', '1');
+                        response = await fetch('includes/set_session.php', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        sessionResult = await response.json();
+                    }
+
+                    if (response.ok && sessionResult.success) {
                         registerSuccessfulLogin();
-                        if (role === 'admin' || role === 'super-admin' || role === 'staff' || role === 'employee') {
+                        const serverRole = sessionResult.role;
+                        if (serverRole === 'admin' || serverRole === 'super-admin' || serverRole === 'staff' || serverRole === 'employee') {
                             window.location.href = 'admin.php';
-                        } else if (role === 'delivery') {
+                        } else if (serverRole === 'delivery') {
                             window.location.href = 'delivery_status.php';
                         } else {
                             window.location.href = 'templates/shop.php';

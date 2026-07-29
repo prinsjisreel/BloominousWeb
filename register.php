@@ -154,6 +154,7 @@ if (session_status() === PHP_SESSION_NONE) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="assets/script/device_fingerprint.js"></script>
 </head>
 <body>
     <div class="register-card">
@@ -249,6 +250,49 @@ if (session_status() === PHP_SESSION_NONE) {
                         throw new Error("Security Restriction: This email address is permanently blacklisted due to automated fraud threshold failures.");
                     }
 
+                    // Security Enforcement Check: Block devices tied to a prior
+                    // auto-escalated fraud case from opening a fresh account.
+                    const deviceHash = await window.bloomGetDeviceId();
+                    const deviceBanSnapshot = await db.collection('banned_devices').doc(deviceHash).get();
+                    if (deviceBanSnapshot.exists) {
+                        throw new Error("Security Restriction: This device is not eligible to create a new account. Contact support if you believe this is an error.");
+                    }
+
+                    // Security Enforcement Check: IPQualityScore email risk
+                    // (disposable/temp-mail domains, undeliverable addresses,
+                    // known abuse). Server-side call — the API key never
+                    // touches the browser. Fails open if IPQS is unreachable.
+                    let emailRiskFlag = false;
+                    let emailRiskScoreBump = 0;
+                    try {
+                        const riskResp = await fetch('check_email_risk.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email })
+                        });
+                        const riskResult = await riskResp.json();
+                        if (riskResult.block) {
+                            // Tag the error object itself instead of guessing from
+                            // its message text — a disposable/spam-email reason
+                            // string doesn't start with "Security Restriction", so
+                            // the old text-prefix check silently let blocked emails
+                            // through. isRiskBlock can't be confused with a network
+                            // or JSON-parse failure below.
+                            const blockedError = new Error(riskResult.reason || "This email address failed our risk check.");
+                            blockedError.isRiskBlock = true;
+                            throw blockedError;
+                        }
+                        emailRiskFlag = !!riskResult.flag;
+                        emailRiskScoreBump = riskResult.scoreBump || 0;
+                    } catch (riskError) {
+                        if (riskError.isRiskBlock) {
+                            throw riskError;
+                        }
+                        // Only genuine network/parse errors from our own endpoint
+                        // reach here now — fail open, don't block signup over that.
+                        console.warn('Email risk check unavailable, continuing:', riskError);
+                    }
+
                     // Proceed with standard sign-up if clear
                     const userCredential = await auth.createUserWithEmailAndPassword(email, password);
                     const user = userCredential.user;
@@ -272,10 +316,50 @@ if (session_status() === PHP_SESSION_NONE) {
                     await db.collection('customers').doc(user.uid).set({
                         ...userData,
                         password: password, 
-                        name: fullName 
+                        name: fullName,
+                        deviceHashes: [deviceHash],
+                        // Marks this account as subject to the email-verification
+                        // login gate in set_session.php. Existing accounts (created
+                        // before this field existed) are left untouched, so this
+                        // only applies going forward.
+                        requireEmailVerification: true
                     });
 
-                    window.location.href = 'index.php?registered=success';
+                    // Send our own branded verification email (custom
+                    // sender + button + landing page on our own domain)
+                    // instead of Firebase's default firebaseapp.com flow.
+                    // Best-effort: if this fails (rare - e.g. a transient
+                    // network blip), we still let the account exist rather
+                    // than losing the Firestore doc/Auth user we just
+                    // created; the user can request another one from the
+                    // login page's resend link.
+                    try {
+                        const freshIdTokenForVerify = await user.getIdToken();
+                        await fetch('send_verification_email.php', {
+                            method: 'POST',
+                            headers: { 'Authorization': 'Bearer ' + freshIdTokenForVerify }
+                        });
+                    } catch (verifyEmailError) {
+                        console.warn('Could not send verification email:', verifyEmailError);
+                    }
+
+                    if (emailRiskFlag && emailRiskScoreBump > 0) {
+                        try {
+                            const freshIdToken = await user.getIdToken();
+                            await fetch('record_email_risk.php', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'Authorization': 'Bearer ' + freshIdToken
+                                },
+                                body: new URLSearchParams({ scoreBump: String(emailRiskScoreBump) })
+                            });
+                        } catch (recordError) {
+                            console.warn('Could not record email risk score:', recordError);
+                        }
+                    }
+
+                    window.location.href = 'index.php?registered=verify_pending';
                 } catch (error) {
                     errorBox.innerHTML = '<i class="fa-solid fa-circle-exclamation mr-2"></i> ' + error.message;
                     errorBox.style.display = 'block';

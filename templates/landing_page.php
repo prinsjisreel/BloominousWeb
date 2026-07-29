@@ -144,7 +144,7 @@
     <div class="max-w-3xl mx-auto text-center mb-20">
         <span class="text-[#7B79F2] font-black uppercase tracking-widest text-xs">About BLOOM</span>
         <h2 class="text-5xl font-black uppercase tracking-tighter text-gray-800 mt-2 mb-6">Retail, Reimagined</h2>
-        <p class="text-gray-500 font-medium leading-relaxed">
+        <p class="text-gray-500 text-lg font-medium leading-relaxed">
             BLOOM is a hybrid Web and Mobile Point of Sale (POS) and e-commerce system built for Bloominous Flower Shop.
             It streamlines retail operations by connecting physical store sales with online order management in real time,
             providing a seamless shopping and administrative experience.
@@ -154,30 +154,30 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-10 mb-24">
         <div class="text-center feature-card">
             <div class="feature-icon"><i class="fa-solid fa-cube"></i></div>
-            <h3 class="text-lg font-black mb-3 uppercase tracking-tight">AR Bouquet Customization</h3>
-            <p class="text-gray-400 text-sm font-medium leading-relaxed">Interactively design and preview 3D floral arrangements in Augmented Reality before you buy.</p>
+            <h3 class="text-xl font-black mb-4 uppercase tracking-tight">AR Bouquet Customization</h3>
+            <p class="text-gray-400 text-base font-medium leading-relaxed">Interactively design and preview 3D floral arrangements in Augmented Reality before you buy.</p>
         </div>
         <div class="text-center feature-card">
             <div class="feature-icon"><i class="fa-solid fa-leaf"></i></div>
-            <h3 class="text-lg font-black mb-3 uppercase tracking-tight">AI Freshness Analysis</h3>
-            <p class="text-gray-400 text-sm font-medium leading-relaxed">Tracks inventory health through visual monitoring, ensuring product quality and smart stock rotation.</p>
+            <h3 class="text-xl font-black mb-4 uppercase tracking-tight">AI Freshness Analysis</h3>
+            <p class="text-gray-400 text-base font-medium leading-relaxed">Tracks inventory health through visual monitoring, ensuring product quality and smart stock rotation.</p>
         </div>
         <div class="text-center feature-card">
             <div class="feature-icon"><i class="fa-solid fa-shop"></i></div>
-            <h3 class="text-lg font-black mb-3 uppercase tracking-tight">Omnichannel POS</h3>
-            <p class="text-gray-400 text-sm font-medium leading-relaxed">Walk-in and online transactions, stock levels, and order histories stay synchronized across all platforms - with Cash, GCash, and Cash on Delivery, plus integrated order fulfillment and tracking.</p>
+            <h3 class="text-xl font-black mb-4 uppercase tracking-tight">Omnichannel POS</h3>
+            <p class="text-gray-400 text-base font-medium leading-relaxed">Walk-in and online transactions, stock levels, and order histories stay synchronized across all platforms - with Cash, GCash, and Cash on Delivery, plus integrated order fulfillment and tracking.</p>
         </div>
     </div>
 
-    <div class="bg-white rounded-[40px] border border-gray-100 p-12 text-center">
+    <div class="bg-white rounded-[40px] border border-gray-100 p-14 text-center">
         <span class="text-[#7B79F2] font-black uppercase tracking-widest text-xs">Supported Occasions & Products</span>
-        <p class="text-gray-500 font-medium leading-relaxed max-w-3xl mx-auto mt-4">
+        <p class="text-gray-500 text-lg font-medium leading-relaxed max-w-3xl mx-auto mt-4">
             BLOOM facilitates the sale and distribution of specialized floral arrangements, gift sets, and accessories
             tailored for every milestone that matters.
         </p>
-        <div class="flex flex-wrap justify-center gap-3 mt-8">
+        <div class="flex flex-wrap justify-center gap-3 mt-10">
             <?php foreach (['Birthdays', 'Anniversaries', 'Graduations', "Valentine's Day", "Mother's Day", "Father's Day", 'Special Events & Celebrations'] as $occasion): ?>
-                <span class="px-5 py-2 bg-[#eef2ff] text-[#7B79F2] text-[11px] font-black uppercase tracking-widest rounded-full"><?php echo htmlspecialchars($occasion); ?></span>
+                <span class="px-6 py-2.5 bg-[#eef2ff] text-[#7B79F2] text-xs font-black uppercase tracking-widest rounded-full"><?php echo htmlspecialchars($occasion); ?></span>
             <?php endforeach; ?>
         </div>
     </div>

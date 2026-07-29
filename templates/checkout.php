@@ -39,6 +39,7 @@ if ($amount <= 0 && empty($items)) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="../assets/script/device_fingerprint.js"></script>
 
     <!-- Leaflet (OpenStreetMap) - free, no API key needed, works on localhost -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
@@ -477,7 +478,11 @@ if ($amount <= 0 && empty($items)) {
 
             try {
                 document.getElementById('smsModal').classList.remove('hidden');
-                pendingConfirmationResult = await auth.signInWithPhoneNumber(phone, window.recaptchaVerifier);
+                // linkWithPhoneNumber attaches the verified phone to the CURRENT
+                // signed-in account. signInWithPhoneNumber (the old call) instead
+                // swaps auth.currentUser to a brand-new phone-auth account, which
+                // silently changed the identity mid-checkout.
+                pendingConfirmationResult = await auth.currentUser.linkWithPhoneNumber(phone, window.recaptchaVerifier);
                 startResendTimer();
             } catch (error) {
                 alert("SMS Error: " + error.message);
@@ -490,15 +495,22 @@ if ($amount <= 0 && empty($items)) {
             if (code.length !== 6) return alert("Please enter the full 6-digit code.");
             try {
                 await pendingConfirmationResult.confirm(code);
-                otpVerifiedThisSession = true;
                 if (resendTimerInterval) clearInterval(resendTimerInterval);
 
-                db.collection('customers').doc(userId).update({
-                    fraudScore: 10,
-                    isRestricted: false,
-                    fraudFlags: firebase.firestore.FieldValue.arrayUnion("Identity verified via SMS - Trust Restored")
-                }).catch(() => {});
+                // Force a fresh ID token so it reflects the newly-linked phone,
+                // then let the server (which checks Auth directly) restore trust.
+                const freshToken = await auth.currentUser.getIdToken(true);
+                const res = await fetch('../restore_trust.php', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + freshToken }
+                });
+                const result = await res.json();
+                if (!result.success) {
+                    alert(result.message || 'Could not verify phone. Please try again.');
+                    return;
+                }
 
+                otpVerifiedThisSession = true;
                 document.getElementById('smsModal').classList.add('hidden');
                 submitOrder();
             } catch (error) {
@@ -553,6 +565,7 @@ if ($amount <= 0 && empty($items)) {
                         currentBranchLng = nearest.branch.longitude;
                         currentBranchName = nearest.branch.name;
                         nearestBranchId = nearest.branch.id;
+                        assignedBranchId = nearest.branch.id; // the order actually gets submitted with THIS variable — it must track the GPS result, not stay stuck on the page-load fallback
                         distance = nearest.distance;
                     } else {
                         // No branch data found in the database - fall back to the Haversine estimate vs the default branch
@@ -772,181 +785,78 @@ if ($amount <= 0 && empty($items)) {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Analyzing Security Protocols...';
             
+            const isGiftChecked = giftCheckbox.checked;
+            const finalTotal = subtotal + shippingFee;
+
             try {
-                // In-Memory Automated Velocity Verification Framework Checks
-                let accumulatedScoreBump = 10; 
-                let localFraudFlags = [];
-                let triggerAutoRestriction = false;
-                
-                const rightNowMs = Date.now();
-                const fiveMinutesAgoMs = rightNowMs - (5 * 60 * 1000); 
-                
-                const velocityQuery = await db.collection('orders')
-                    .where('user_id', '==', userId)
-                    .get();
+                // Velocity + geo fraud scoring, the restriction gate, and the
+                // order/customer writes all happen server-side now — see
+                // submit_order.php. The client just sends what it observed
+                // (device coordinates) and its own Firebase ID token; it can
+                // no longer compute or set its own fraudScore.
+                const idToken = await auth.currentUser.getIdToken();
+                const deviceHash = await window.bloomGetDeviceId();
 
-                let hasRecentVelocitySpam = false;
-                if (!velocityQuery.empty) {
-                    velocityQuery.forEach(oDoc => {
-                        const oData = oDoc.data();
-                        const orderTimestamp = oData.createdAt || oData.timestamp;
-                        if (orderTimestamp) {
-                            const orderTimeMs = orderTimestamp.toDate().getTime();
-                            if (orderTimeMs >= fiveMinutesAgoMs && orderTimeMs <= rightNowMs) {
-                                hasRecentVelocitySpam = true;
-                            }
-                        }
-                    });
-                }
-
-                if (hasRecentVelocitySpam) {
-                    accumulatedScoreBump += 35; 
-                    localFraudFlags.push("Rapid Separated Checkouts Flagged (< 5 min window)");
-                    triggerAutoRestriction = true; 
-                }
-
-                // Geographical Mismatch Evaluation Rules Engine
-                const isGiftChecked = giftCheckbox.checked;
-                if (!isGiftChecked && customerLat && customerLng) {
-                    const deviceToBranchDistance = calculateDistance(currentBranchLat, currentBranchLng, parseFloat(customerLat), parseFloat(customerLng));
-                    if (deviceToBranchDistance > 50) { 
-                        accumulatedScoreBump += 45; 
-                        localFraudFlags.push("Severe Device-to-Destination Mismatch");
-                    }
-                }
-
-                const custRef = db.collection('customers').doc(userId);
-                let checkAutoBan = false;
-
-                await db.runTransaction(async (transaction) => {
-                    const custDoc = await transaction.get(custRef);
-                    if (custDoc.exists) {
-                        let baseScore = custDoc.data().fraudScore || 0;
-                        let ultimateScore = Math.min(100, baseScore + accumulatedScoreBump);
-                        
-                        let payloadUpdate = { fraudScore: ultimateScore };
-                        
-                        if (triggerAutoRestriction) {
-                            const expiryDate = new Date();
-                            expiryDate.setDate(expiryDate.getDate() + 30); 
-                            
-                            payloadUpdate.isRestricted = true;
-                            payloadUpdate.restrictedUntil = firebase.firestore.Timestamp.fromDate(expiryDate);
-                            localFraudFlags.push("Automated 30-Day Restriction: Rapid checkout loop velocity limit violated.");
-                        }
-
-                        if (ultimateScore >= 100) {
-                            checkAutoBan = true; 
-                        }
-
-                        if (localFraudFlags.length > 0) {
-                            payloadUpdate.fraudFlags = firebase.firestore.FieldValue.arrayUnion(...localFraudFlags);
-                        }
-                        transaction.update(custRef, payloadUpdate);
-                    }
+                const response = await fetch('../submit_order.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + idToken
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        name: name,
+                        email: document.getElementById('email').value,
+                        address: fullStitchedAddress,
+                        phone: phone,
+                        paymentMethod: paymentMethod,
+                        items: items,
+                        subtotal: subtotal,
+                        shippingFee: shippingFee,
+                        branchId: assignedBranchId,
+                        isGift: isGiftChecked,
+                        customerLat: customerLat,
+                        customerLng: customerLng,
+                        otpVerified: otpVerifiedThisSession,
+                        deviceHash: deviceHash
+                    })
                 });
 
-                // --- INTEGRATED TRIGGER: LIVE ALERT ROUTED ON RESTRICTION ACTION ---
-                if (triggerAutoRestriction) {
-                    await db.collection('notifications').add({
-                        title: 'Fraud Alert - Account Restricted',
-                        message: `Account [${userId}] was soft-restricted automatically due to rapid checkout loops.`,
-                        type: 'fraud',
-                        branchId: assignedBranchId,
-                        created_at: firebase.firestore.FieldValue.serverTimestamp(),
-                        read: false
-                    });
-                }
+                const result = await response.json();
 
-                if (checkAutoBan) {
-                    const batch = db.batch();
-                    batch.update(custRef, { status: "blocked" });
-                    if (document.getElementById('email').value) {
-                        const blocklistRef = db.collection('blocked_emails').doc(document.getElementById('email').value.toLowerCase());
-                        batch.set(blocklistRef, {
-                            blockedUid: userId,
-                            reason: "Automated mitigation framework lockout: Terminal limit reached.",
-                            blockedAt: firebase.firestore.FieldValue.serverTimestamp()
-                        });
+                if (!result.success) {
+                    if (result.code === 'RESTRICTED') {
+                        sessionStorage.setItem('bloom_shop_error', result.message);
+                        window.location.href = 'shop.php';
+                        return;
                     }
-                    await batch.commit();
-
-                    // Notify Admins of critical account ban
-                    await db.collection('notifications').add({
-                        title: 'Security Alert - Account Blocked',
-                        message: `Account associated with ${name} reached peak fraud limits and has been blacklisted.`,
-                        type: 'warning',
-                        branchId: assignedBranchId,
-                        created_at: firebase.firestore.FieldValue.serverTimestamp(),
-                        read: false
-                    });
-                }
-
-                if (hasRecentVelocitySpam) {
-                    sessionStorage.setItem('bloom_shop_error', "Velocity Check Warning: System detected multiple checkouts processed rapidly. This account has been automatically restricted for 30 days.");
-                    window.location.href = 'shop.php';
+                    if (result.code === 'BLOCKED') {
+                        sessionStorage.setItem('bloom_shop_error', result.message);
+                        window.location.href = 'shop.php';
+                        return;
+                    }
+                    alert(result.message || 'Transaction failed.');
+                    btn.disabled = false;
+                    btn.innerHTML = 'Place Order';
                     return;
                 }
 
-                // Create Order document manifest payload
-                const finalTotal = subtotal + shippingFee;
-                const generatedOrderId = 'BLM-' + Date.now();
-                
-                const orderRef = await db.collection('orders').add({
-                    user_id: userId,
-                    customer_name: name,
-                    customerName: name, 
-                    recipientName: name,
-                    recipientPhone: phone,
-                    email: document.getElementById('email').value,
-                    address: fullStitchedAddress,
-                    phone: normalizePhone(phone), // Commit perfectly normalized telemetry strings
-                    payment_method: paymentMethod,
-                    items: items,
-                    subtotal: subtotal,
-                    shipping_fee: shippingFee,
-                    total_price: finalTotal,
-                    branchId: assignedBranchId,
-                    status: 'pending',
-                    type: 'WEB',
-                    isGift: isGiftChecked,
-                    fraudScore: accumulatedScoreBump,
-                    fraudFlags: localFraudFlags,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                // --- INTEGRATED TRIGGER: SUCCESSFUL WEB TRANSACTION BROADCAST ---
-                await db.collection('notifications').add({
-                    title: 'New Web Order Placed',
-                    message: `Order #${generatedOrderId} valued at P${finalTotal.toLocaleString()} received from ${name.trim()}.`,
-                    type: 'sale',
-                    branchId: assignedBranchId,
-                    created_at: firebase.firestore.FieldValue.serverTimestamp(),
-                    read: false
-                });
-                
                 localStorage.removeItem('bloom_cart');
-                
+
                 if (['GCash', 'PayMaya'].includes(paymentMethod)) {
-                    document.getElementById('pm_order_id').value = orderRef.id;
+                    document.getElementById('pm_order_id').value = result.orderId;
                     document.getElementById('pm_amount').value = finalTotal;
                     document.getElementById('pm_email').value = document.getElementById('email').value;
                     document.getElementById('pm_name').value = name;
                     document.getElementById('pm_method').value = paymentMethod;
                     document.getElementById('paymongoForm').submit();
                 } else {
-                    window.location.href = '../track_order.php?id=' + orderRef.id + '&success=true';
+                    window.location.href = '../track_order.php?id=' + result.orderId + '&success=true';
                 }
             } catch (error) {
-                if (error.message.includes("permission-denied") || error.code === "permission-denied") {
-                    sessionStorage.setItem('bloom_shop_error', "Checkout Blocked: This transaction was rejected by security rules because your account profile carries an active soft restriction profile.");
-                    window.location.href = 'shop.php';
-                } else {
-                    alert("Transaction Failed: " + error.message);
-                    btn.disabled = false;
-                    btn.innerHTML = 'Place Order';
-                }
+                alert("Transaction Failed: " + error.message);
+                btn.disabled = false;
+                btn.innerHTML = 'Place Order';
             }
         }
 

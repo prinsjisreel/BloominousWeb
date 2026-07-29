@@ -60,6 +60,8 @@ if ($user_role === 'delivery') {
         // Global Branch Management
         window.currentBranch = localStorage.getItem('bloom_branch_id') || '<?php echo $_SESSION['branchId'] ?? 'main_branch'; ?>';
         window.currentUserRole = '<?php echo $user_role; ?>';
+        window.currentUserName = '<?php echo addslashes($_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'Staff'); ?>';
+        window.currentUserEmail = '<?php echo addslashes(strtolower($_SESSION['email'] ?? '')); ?>';
         
         <?php if (isset($_SESSION['role']) && $_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'super-admin'): ?>
             window.currentBranch = '<?php echo $_SESSION['branchId'] ?? 'main_branch'; ?>';
@@ -76,6 +78,60 @@ if ($user_role === 'delivery') {
         window.setBranch = (branchId) => {
             localStorage.setItem('bloom_branch_id', branchId);
             window.location.reload();
+        };
+
+        // --- Invoice / Void system: Phase 1 data-model helpers ---
+
+        // Transaction-safe sequential invoice numbering (INV-2026-0001, INV-2026-0002, ...).
+        // Uses a Firestore transaction so two simultaneous checkouts (any branch) can never
+        // be issued the same number.
+        window.generateInvoiceId = async () => {
+            const counterRef = db.collection('counters').doc('invoices');
+            const year = new Date().getFullYear();
+            let invoiceId;
+            await db.runTransaction(async (transaction) => {
+                const counterDoc = await transaction.get(counterRef);
+                const data = counterDoc.exists ? counterDoc.data() : {};
+                // Running number resets automatically whenever the year rolls over
+                const nextNumber = (data.year === year ? (data.current || 0) : 0) + 1;
+                invoiceId = `INV-${year}-${String(nextNumber).padStart(4, '0')}`;
+                transaction.set(counterRef, { current: nextNumber, year: year }, { merge: true });
+            });
+            return invoiceId;
+        };
+
+        // Same pattern, reserved for the Void module (VOID-2026-0001, ...).
+        // No refund counter exists anymore — the business does not return money on a
+        // cancelled/voided item, so there is nothing to number besides the void itself.
+        window.generateVoidId = async () => {
+            const counterRef = db.collection('counters').doc('voids');
+            const year = new Date().getFullYear();
+            let voidId;
+            await db.runTransaction(async (transaction) => {
+                const counterDoc = await transaction.get(counterRef);
+                const data = counterDoc.exists ? counterDoc.data() : {};
+                const nextNumber = (data.year === year ? (data.current || 0) : 0) + 1;
+                voidId = `VOID-${year}-${String(nextNumber).padStart(4, '0')}`;
+                transaction.set(counterRef, { current: nextNumber, year: year }, { merge: true });
+            });
+            return voidId;
+        };
+
+        // Returns true if the order is a finalized invoice (locked) and must not be edited directly.
+        window.isOrderLocked = async (orderId) => {
+            const doc = await db.collection('orders').doc(orderId).get();
+            if (!doc.exists) return false;
+            return doc.data().locked === true;
+        };
+
+        // Call before any direct status/field edit on an order. Returns true (and alerts the
+        // user) if the edit should be BLOCKED because the invoice is already finalized.
+        window.blockIfLocked = async (orderId) => {
+            const locked = await window.isOrderLocked(orderId);
+            if (locked) {
+                alert("This invoice is finalized and can't be edited directly. Use the Void module instead.");
+            }
+            return locked;
         };
 
         // Auto-check expired Recycled Bouquet (2 days expiration) & cleanup "Recycled Flowers"
@@ -225,6 +281,10 @@ if ($user_role === 'delivery') {
             <i class="fa-solid fa-shopping-bag"></i>
             <span>Orders</span>
         </a>
+        <a href="invoice_portal.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'invoice_portal.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-receipt"></i>
+            <span>Invoice Portal</span>
+        </a>
         <a href="preorder_reservation.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'preorder_reservation.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-calendar-days"></i>
             <span>Pre-Order & Reservation</span>
@@ -233,6 +293,10 @@ if ($user_role === 'delivery') {
         <a href="fraud_analytics.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'fraud_analytics.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-user-secret"></i>
             <span>Fraud Analytics</span>
+        </a>
+        <a href="sales_anomalies.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'sales_anomalies.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>Sales Anomalies</span>
         </a>
         <a href="product_management.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_management.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-box"></i>

@@ -69,6 +69,31 @@ include 'templates/header.php';
         return parts.map(p => p.length <= 2 ? p[0] + "*" : p[0] + "*".repeat(p.length - 2) + p[p.length - 1]).join(' ');     
     }     
     
+    // Bans every device hash on record for this account, so the same
+    // person can't just spin up a new account from the same device.
+    // Separate from the isRestricted toggle above — this targets the
+    // device, not the account.
+    async function manualBanDevices(uid, deviceHashes) {
+        if (!deviceHashes || deviceHashes.length === 0) {
+            alert('No device history on file for this account yet.');
+            return;
+        }
+        if (!confirm(`Ban ${deviceHashes.length} device(s) linked to this account?`)) return;
+        try {
+            const batch = db.batch();
+            deviceHashes.forEach(hash => {
+                const ref = db.collection('banned_devices').doc(hash);
+                batch.set(ref, {
+                    bannedUid: uid,
+                    reason: 'Manually banned by admin from Fraud Risk Analytics',
+                    bannedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            });
+            await batch.commit();
+            alert('Device(s) banned.');
+        } catch (e) { alert('Admin mutation access error: ' + e.message); }
+    }
+
     // Manual Admin Penalty Control states (Completely separate path from customer restrictions)     
     async function manualAdminOverrideToggle(uid, currentState) {         
         const nextState = !currentState;         
@@ -151,6 +176,9 @@ include 'templates/header.php';
                                 ${c.status === 'blocked' ? '<span class="text-xs font-black text-gray-400 uppercase bg-gray-100 px-4 py-2 rounded-xl">Blacklisted</span>' : `                                 
                                 <button onclick="manualAdminOverrideToggle('${c.id}', ${isRestricted})" class="btn-restrict ${isRestricted ? 'bg-emerald-600' : 'bg-red-600'} text-white">                                     
                                     ${isRestricted ? 'Lift Penalty' : 'Manual Restrict'}                                 
+                                </button>
+                                <button onclick='manualBanDevices("${c.id}", ${JSON.stringify(c.deviceHashes || [])})' class="btn-restrict bg-gray-800 text-white" style="margin-left:6px;">
+                                    Ban Device(s)
                                 </button>`}                             
                             </div>                         
                         </div>                         

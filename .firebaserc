@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "BLOOM": "ar-flower-shop-app",
+    "default": "ar-flower-shop-app"
+  },
+  "targets": {},
+  "etags": {}
+}

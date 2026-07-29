@@ -2,3 +2,4 @@ vendor/
 composer.lock
 phpunit.xml
 serviceAccountKey.json
+includes/mailer-local-config.php
