@@ -90,12 +90,15 @@ service cloud.firestore {
     }
     
     // 2. Customers Collection (E-Commerce Client Profiles)
+    // ← UPDATED: 'password' added to both blocked-field lists below, so
+    // no client write (create OR update) can ever place a plaintext
+    // password into this document again, going forward.
     match /customers/{userId} {
       allow read: if true;
       allow create: if isOwner(userId) && 
-                    !request.resource.data.keys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil']);
+                    !request.resource.data.keys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil', 'password']);
       allow update: if (isOwner(userId) && 
-                       !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil'])) 
+                       !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil', 'password'])) 
                     || isAdmin();
       allow delete: if isAdmin();
     }

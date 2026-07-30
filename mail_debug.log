@@ -846,3 +846,103 @@
 
 2026-07-19 18:08:39 | SERVER -> CLIENT: 221 2.0.0 closing connection d2e1a72fcca58-84c2ad87f78sm4340601b3a.11 - gsmtp
 
+2026-07-30 11:04:10 | SERVER -> CLIENT: 220 smtp.gmail.com ESMTP 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+
+2026-07-30 11:04:10 | CLIENT -> SERVER: EHLO localhost
+
+2026-07-30 11:04:10 | SERVER -> CLIENT: 250-smtp.gmail.com at your service, [136.158.63.255]
+250-SIZE 35882577
+250-8BITMIME
+250-STARTTLS
+250-ENHANCEDSTATUSCODES
+250-PIPELINING
+250-CHUNKING
+250 SMTPUTF8
+
+2026-07-30 11:04:10 | CLIENT -> SERVER: STARTTLS
+
+2026-07-30 11:04:11 | SERVER -> CLIENT: 220 2.0.0 Ready to start TLS
+
+2026-07-30 11:04:11 | CLIENT -> SERVER: EHLO localhost
+
+2026-07-30 11:04:11 | SERVER -> CLIENT: 250-smtp.gmail.com at your service, [136.158.63.255]
+250-SIZE 35882577
+250-8BITMIME
+250-AUTH LOGIN PLAIN XOAUTH2 PLAIN-CLIENTTOKEN OAUTHBEARER XOAUTH
+250-ENHANCEDSTATUSCODES
+250-PIPELINING
+250-CHUNKING
+250 SMTPUTF8
+
+2026-07-30 11:04:11 | CLIENT -> SERVER: AUTH LOGIN
+
+2026-07-30 11:04:11 | SERVER -> CLIENT: 334 VXNlcm5hbWU6
+
+2026-07-30 11:04:11 | CLIENT -> SERVER: [credentials hidden]
+2026-07-30 11:04:11 | SERVER -> CLIENT: 334 UGFzc3dvcmQ6
+
+2026-07-30 11:04:11 | CLIENT -> SERVER: [credentials hidden]
+2026-07-30 11:04:12 | SERVER -> CLIENT: 235 2.7.0 Accepted
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: MAIL FROM:<luckyboyph18@gmail.com>
+
+2026-07-30 11:04:12 | SERVER -> CLIENT: 250 2.1.0 OK 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: RCPT TO:<josephmasarap837@gmail.com>
+
+2026-07-30 11:04:12 | SERVER -> CLIENT: 250 2.1.5 OK 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: DATA
+
+2026-07-30 11:04:12 | SERVER -> CLIENT: 354 Go ahead 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: Date: Thu, 30 Jul 2026 11:04:09 +0200
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: To: josephmasarap837@gmail.com
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: From: BLOOMINOUS System <luckyboyph18@gmail.com>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: Subject: BLOOMINOUS - Security Recovery Code
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: Message-ID: <GYb0NGD8m76iZtHUUSHYXl2po39HmHiUaDgJXBi1tE@localhost>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: MIME-Version: 1.0
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: Content-Type: text/html; charset=iso-8859-1
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: 
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: 
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:         <div style='font-family: "Poppins", "Inter", sans-serif; background: #FFFDF7; padding: 40px; color: #363949; max-width: 500px; margin: 0 auto; border-radius: 30px; border: 1px solid #f0f0f0;'>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             <div style='text-align: center; font-size: 24px; font-weight: 900; letter-spacing: 4px; color: #F59E0B; margin-bottom: 20px;'>BLOOM</div>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             <h2 style='text-align: center; font-weight: 800; margin-bottom: 10px;'>Account Recovery</h2>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             <p style='text-align: center; color: #7d8da1; font-size: 13px; margin-bottom: 30px;'>Use the single-use security token below to configure your new credentials.</p>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             <div style='background: #fafafa; border: 2px dashed #F59E0B; padding: 20px; border-radius: 20px; text-align: center; font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #363949;'>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:                 140223
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             </div>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:             <p style='text-align: center; color: #b2bec3; font-size: 11px; margin-top: 30px; line-height: 1.6;'>If you did not initiate this system account request, please safely ignore this broadcast terminal telemetry transmission.</p>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:         </div>
+
+2026-07-30 11:04:12 | CLIENT -> SERVER:     
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: 
+
+2026-07-30 11:04:12 | CLIENT -> SERVER: .
+
+2026-07-30 11:04:13 | SERVER -> CLIENT: 250 2.0.0 OK  1785402254 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+
+2026-07-30 11:04:13 | CLIENT -> SERVER: QUIT
+
+2026-07-30 11:04:13 | SERVER -> CLIENT: 221 2.0.0 closing connection 98e67ed59e1d1-38f9bab61desm706769a91.13 - gsmtp
+

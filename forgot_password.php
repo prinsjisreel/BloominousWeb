@@ -165,9 +165,28 @@
                 statusBox.style.display = 'none';                 
                 statusBox.className = 'status-msg';                 
                 try {                     
-                    const userCheck = await db.collection('users').where('email', '==', emailInput).get();                     
-                    const custCheck = await db.collection('customers').where('email', '==', emailInput).get();                     
-                    if (userCheck.empty && custCheck.empty && emailInput !== '789jojoalvarado@gmail.com') {                         
+                    // ← FIXED: was two client-side Firestore queries
+                    // (db.collection('users').where('email',...).get() and
+                    // the same on 'customers'). The 'users' one requires
+                    // isAdmin() under firestore.rules' `allow list` rule -
+                    // guaranteed to fail here, since this page runs while
+                    // logged out by definition. Now checks Firebase Auth
+                    // directly via a server-side Admin SDK call instead.
+                    const existsResp = await fetch('check_account_exists.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: emailInput })
+                    });
+                    if (!existsResp.ok) {
+                        // Covers a missing/misplaced file (404 HTML page),
+                        // a PHP fatal error, or any other non-JSON response -
+                        // surfaces a clear message instead of letting
+                        // existsResp.json() throw a confusing raw
+                        // "Unexpected token '<'..." parse error below.
+                        throw new Error('Could not reach the account recovery service (HTTP ' + existsResp.status + '). Please try again shortly.');
+                    }
+                    const existsResult = await existsResp.json();
+                    if (!existsResult.exists && emailInput !== '789jojoalvarado@gmail.com') {                         
                         throw new Error("No active registry matches this account endpoint.");                     
                     }                     
                     targetUserEmail = emailInput;                     
@@ -284,18 +303,17 @@
                         throw new Error(authUpdateResult.message || 'Failed to update Firebase Auth password.');
                     }
 
-                    // 2. Firestore Sync Layer Update - keep the mirrored plaintext
-                    // field in sync too, now that the REAL password has changed.
-                    const batch = db.batch();                     
-                    const usersRef = await db.collection('users').where('email', '==', targetUserEmail).get();                     
-                    const custRefByEmail = await db.collection('customers').where('email', '==', targetUserEmail).get();                     
-                    const custRefByCustEmail = await db.collection('customers').where('custEmail', '==', targetUserEmail).get();                     
-                    
-                    usersRef.forEach(doc => { batch.update(doc.ref, { password: newPassword }); });                     
-                    custRefByEmail.forEach(doc => { batch.update(doc.ref, { password: newPassword }); });                     
-                    custRefByCustEmail.forEach(doc => { batch.update(doc.ref, { password: newPassword }); });                     
-                    
-                    await batch.commit();                     
+                    // ← REMOVED: the Firestore "sync" step that used to run
+                    // here (mirroring the plaintext password into
+                    // `users`/`customers` docs via db.batch()) is gone.
+                    // firestore.rules now blocks any client write to
+                    // `customers` containing a `password` field, so this
+                    // batch would fail with permission-denied the moment
+                    // someone reached this step. It was also redundant:
+                    // the Admin SDK call above already updated the REAL
+                    // Firebase Auth password, which is the actual source
+                    // of truth for login - nothing else in the app needs
+                    // to read a mirrored plaintext copy.
                     statusBox.innerText = "Password updated successfully! You can now log in with your new password.";                     
                     statusBox.className = 'status-msg success-layout';                     
                     statusBox.style.display = 'block';                     

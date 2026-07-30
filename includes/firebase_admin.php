@@ -40,7 +40,8 @@ function bloom_firebase_factory(): Factory
  * Used by submit_order.php / restore_trust.php for transactions, queries,
  * and writes. The login path does NOT use this — see
  * bloom_firestore_get_document_rest() below, which reads single documents
- * over plain HTTPS and needs no gRPC.
+ * over plain HTTPS and needs no gRPC. rate_limiter.php also avoids this
+ * for the same reason — see bloom_firestore_set_document_rest() below.
  */
 function bloom_firestore(): FirestoreClient
 {
@@ -63,9 +64,9 @@ function bloom_firestore(): FirestoreClient
  *
  * Intentionally narrow: only supports "get one document by collection +
  * id," which is all the login path (set_session.php) needs. It is NOT a
- * replacement for bloom_firestore() — no queries, no transactions, no
- * writes. Returns null if the document doesn't exist (mirrors
- * DocumentSnapshot::exists() === false).
+ * replacement for bloom_firestore() — no queries, no transactions. See
+ * bloom_firestore_set_document_rest() below for its write-side companion,
+ * used by rate_limiter.php.
  *
  * @throws \Throwable on auth/network failure — callers should let this
  *         bubble up rather than silently treating it as "no such user."
@@ -144,6 +145,88 @@ function bloom_decode_firestore_value(array $value)
     }
     return null;
 }
+
+// ============================================================
+// ← NEW: REST write support (added for rate_limiter.php)
+// ============================================================
+
+/**
+ * Writes (creates or fully overwrites) a single Firestore document over the
+ * plain REST API — the write-side companion to
+ * bloom_firestore_get_document_rest(). Same no-gRPC trust model.
+ *
+ * Uses PATCH with no updateMask, which Firestore's REST API treats as a
+ * full document replace (equivalent to .set() without merge) — exactly
+ * what rate_limiter.php needs, since it always writes the complete current
+ * state of a counter document, never a partial update.
+ */
+function bloom_firestore_set_document_rest(string $collection, string $docId, array $data): void
+{
+    static $credentials = null;
+    static $httpClient = null;
+    static $projectId = null;
+
+    if ($credentials === null) {
+        global $firebaseConfig;
+        $credentials = new \Google\Auth\Credentials\ServiceAccountCredentials(
+            'https://www.googleapis.com/auth/datastore',
+            FIREBASE_SERVICE_ACCOUNT_JSON
+        );
+        $httpClient = new \GuzzleHttp\Client();
+        $projectId = $firebaseConfig['projectId'];
+    }
+
+    $token = $credentials->fetchAuthToken();
+    if (empty($token['access_token'])) {
+        throw new \RuntimeException('Could not obtain a Firestore access token.');
+    }
+
+    $url = sprintf(
+        'https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents/%s/%s',
+        $projectId,
+        rawurlencode($collection),
+        rawurlencode($docId)
+    );
+
+    $httpClient->request('PATCH', $url, [
+        'headers' => ['Authorization' => 'Bearer ' . $token['access_token']],
+        'json' => ['fields' => bloom_encode_firestore_fields($data)],
+    ]);
+}
+
+/**
+ * Encodes a plain PHP associative array into the Firestore REST API's typed
+ * field format (stringValue, integerValue, mapValue, ...) — the exact
+ * inverse of bloom_decode_firestore_fields() above.
+ */
+function bloom_encode_firestore_fields(array $fields): array
+{
+    $out = [];
+    foreach ($fields as $key => $value) {
+        $out[$key] = bloom_encode_firestore_value($value);
+    }
+    return $out;
+}
+
+function bloom_encode_firestore_value($value): array
+{
+    if (is_string($value)) return ['stringValue' => $value];
+    if (is_int($value)) return ['integerValue' => (string) $value];
+    if (is_float($value)) return ['doubleValue' => $value];
+    if (is_bool($value)) return ['booleanValue' => $value];
+    if ($value === null) return ['nullValue' => null];
+    if (is_array($value)) {
+        $isList = array_keys($value) === range(0, count($value) - 1);
+        return $isList
+            ? ['arrayValue' => ['values' => array_map('bloom_encode_firestore_value', $value)]]
+            : ['mapValue' => ['fields' => bloom_encode_firestore_fields($value)]];
+    }
+    throw new \InvalidArgumentException('Unsupported Firestore value type: ' . gettype($value));
+}
+
+// ============================================================
+// End of new REST write support
+// ============================================================
 
 function bloom_auth(): \Kreait\Firebase\Auth
 {

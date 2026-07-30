@@ -14,7 +14,7 @@ if (session_status() === PHP_SESSION_NONE) {
     <title>Join BloomShop - Register</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Cormorant+Garamond:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-         
+
     <style>
         :root {
             --primary: #F59E0B;
@@ -25,41 +25,41 @@ if (session_status() === PHP_SESSION_NONE) {
             --white: #ffffff;
             --error: #FF5252;
         }
-        body { 
-             font-family: 'Inter', sans-serif; 
-             background: var(--bg); 
-             display: flex; 
-             justify-content: center; 
-             align-items: center; 
-             min-height: 100vh; 
-             margin: 0; 
+        body {
+             font-family: 'Inter', sans-serif;
+             background: var(--bg);
+             display: flex;
+             justify-content: center;
+             align-items: center;
+             min-height: 100vh;
+             margin: 0;
              padding: 30px;
         }
-        .register-card { 
-             background: var(--white); 
-             padding: 50px; 
-             border-radius: 40px; 
-             box-shadow: 0 20px 60px rgba(245, 158, 11, 0.06); 
-             width: 100%; 
-             max-width: 500px; 
-             text-align: center; 
+        .register-card {
+             background: var(--white);
+             padding: 50px;
+             border-radius: 40px;
+             box-shadow: 0 20px 60px rgba(245, 158, 11, 0.06);
+             width: 100%;
+             max-width: 500px;
+             text-align: center;
              border: 1px solid rgba(245, 158, 11, 0.03);
              position: relative;
         }
-        .brand-name { 
-             font-family: 'Cormorant Garamond', serif; 
-             font-size: 32px; 
-             font-weight: 900; 
-             letter-spacing: 4px; 
-             color: var(--primary); 
-             margin-bottom: 5px; 
+        .brand-name {
+             font-family: 'Cormorant Garamond', serif;
+             font-size: 32px;
+             font-weight: 900;
+             letter-spacing: 4px;
+             color: var(--primary);
+             margin-bottom: 5px;
          }
-        h2 { 
-             font-family: 'Cormorant Garamond', serif; 
-             color: var(--text-main); 
-             margin-bottom: 5px; 
-             font-weight: 800; 
-             font-size: 32px; 
+        h2 {
+             font-family: 'Cormorant Garamond', serif;
+             color: var(--text-main);
+             margin-bottom: 5px;
+             font-weight: 800;
+             font-size: 32px;
          }
         p.subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 35px; font-weight: 500; }
         .form-grid {
@@ -94,59 +94,59 @@ if (session_status() === PHP_SESSION_NONE) {
             margin-bottom: 6px;
             margin-left: 10px;
         }
-        input, select { 
-             width: 100%; 
-             padding: 14px 15px 14px 45px; 
-             border: 1px solid #f0f0f0; 
-             border-radius: 15px; 
-             box-sizing: border-box; 
-             outline: none; 
-             transition: 0.3s; 
-             background: #fafafa; 
+        input, select {
+             width: 100%;
+             padding: 14px 15px 14px 45px;
+             border: 1px solid #f0f0f0;
+             border-radius: 15px;
+             box-sizing: border-box;
+             outline: none;
+             transition: 0.3s;
+             background: #fafafa;
              font-family: 'Inter';
             font-weight: 500;
             color: var(--text-main);
             font-size: 0.85rem;
         }
-        input:focus, select:focus { 
-             border-color: var(--primary); 
-             background: var(--white); 
+        input:focus, select:focus {
+             border-color: var(--primary);
+             background: var(--white);
              box-shadow: 0 0 15px rgba(245, 158, 11, 0.05);
         }
-        button { 
-             width: 100%; 
-             padding: 16px; 
-             background: var(--primary); 
-             color: white; 
-             border: none; 
-             border-radius: 15px; 
-             cursor: pointer; 
-             font-size: 14px; 
-             font-weight: 800; 
-             transition: 0.4s; 
-             margin-top: 15px; 
+        button {
+             width: 100%;
+             padding: 16px;
+             background: var(--primary);
+             color: white;
+             border: none;
+             border-radius: 15px;
+             cursor: pointer;
+             font-size: 14px;
+             font-weight: 800;
+             transition: 0.4s;
+             margin-top: 15px;
              box-shadow: 0 8px 25px rgba(245, 158, 11, 0.2);
              text-transform: uppercase;
              letter-spacing: 2px;
         }
-        button:hover { 
-             background: #d97706; 
+        button:hover {
+             background: #d97706;
              transform: translateY(-3px);
-             box-shadow: 0 12px 30px rgba(217, 119, 6, 0.3); 
+             box-shadow: 0 12px 30px rgba(217, 119, 6, 0.3);
          }
         .footer-link { margin-top: 30px; font-size: 0.85rem; color: var(--text-muted); font-weight: 500; }
         .footer-link a { color: var(--secondary); text-decoration: none; font-weight: 700; }
         .footer-link a:hover { text-decoration: underline; }
-        .error-msg { 
-              background: #fff5f8; 
-              color: var(--error); 
-              padding: 12px; 
-              border-radius: 12px; 
-              font-size: 0.8rem; 
-              margin-bottom: 20px; 
+        .error-msg {
+              background: #fff5f8;
+              color: var(--error);
+              padding: 12px;
+              border-radius: 12px;
+              font-size: 0.8rem;
+              margin-bottom: 20px;
               border: 1px solid rgba(233, 30, 99, 0.1);
-             text-align: center; 
-              display: none; 
+             text-align: center;
+              display: none;
               font-weight: 700;
          }
     </style>
@@ -155,13 +155,14 @@ if (session_status() === PHP_SESSION_NONE) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="assets/script/device_fingerprint.js"></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
     <div class="register-card">
         <div class="brand-name">BLOOMINOUS</div>
         <h2>Create Account</h2>
         <p class="subtitle">Join our community of flower lovers</p>
-                 
+
         <div id="error-box" class="error-msg"></div>
         <form id="register-form">
             <div class="form-grid">
@@ -204,7 +205,16 @@ if (session_status() === PHP_SESSION_NONE) {
                     <input type="password" id="password" placeholder=" " required>
                 </div>
             </div>
-                         
+
+            <div class="cf-turnstile" data-sitekey="<?php
+                require_once __DIR__ . '/config.local.php';
+                echo htmlspecialchars(getenv('TURNSTILE_SITE_KEY') ?: '', ENT_QUOTES);
+            ?>"
+                 data-callback="onTurnstileSuccess"
+                 data-error-callback="onTurnstileError"
+                 data-expired-callback="onTurnstileExpired"
+                 style="margin-bottom: 15px;"></div>
+
             <button type="submit" id="register-btn">
                 <i class="fa-solid fa-user-plus mr-2"></i> Join Experience
             </button>
@@ -219,13 +229,33 @@ if (session_status() === PHP_SESSION_NONE) {
             $config = file_exists($configPath) ? file_get_contents($configPath) : '{}';
             echo "const firebaseConfig = " . $config . ";";
         ?>
-                 
+
+        let turnstileToken = '';
+        const errorBox = document.getElementById('error-box');
+
+        window.onTurnstileSuccess = function (token) {
+            turnstileToken = token;
+            errorBox.style.display = 'none';
+        };
+
+        window.onTurnstileError = function (errorCode) {
+            turnstileToken = '';
+            console.error('Turnstile widget error:', errorCode);
+            errorBox.innerText = 'Verification failed to load. Please refresh the page and try again.';
+            errorBox.style.display = 'block';
+        };
+
+        window.onTurnstileExpired = function () {
+            turnstileToken = '';
+            errorBox.innerText = 'Verification expired. Please complete it again.';
+            errorBox.style.display = 'block';
+        };
+
         if (firebaseConfig.apiKey) {
             firebase.initializeApp(firebaseConfig);
             const auth = firebase.auth();
             const db = firebase.firestore();
             const registerForm = document.getElementById('register-form');
-            const errorBox = document.getElementById('error-box');
 
             registerForm.onsubmit = async (e) => {
                 e.preventDefault();
@@ -242,6 +272,14 @@ if (session_status() === PHP_SESSION_NONE) {
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Synchronizing...';
                 errorBox.style.display = 'none';
+
+                if (!turnstileToken) {
+                    errorBox.innerText = 'Please complete the verification challenge.';
+                    errorBox.style.display = 'block';
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-user-plus mr-2"></i> Join Experience';
+                    return;
+                }
 
                 try {
                     // Security Enforcement Check: Block blacklisted emails from creating accounts
@@ -260,24 +298,33 @@ if (session_status() === PHP_SESSION_NONE) {
 
                     // Security Enforcement Check: IPQualityScore email risk
                     // (disposable/temp-mail domains, undeliverable addresses,
-                    // known abuse). Server-side call — the API key never
-                    // touches the browser. Fails open if IPQS is unreachable.
+                    // known abuse), now ALSO covering rate limiting + Turnstile
+                    // + domain allow-list server-side (see check_email_risk.php).
+                    // The API key never touches the browser. Fails open if
+                    // IPQS is unreachable.
                     let emailRiskFlag = false;
                     let emailRiskScoreBump = 0;
                     try {
                         const riskResp = await fetch('check_email_risk.php', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email })
+                            body: JSON.stringify({ email, turnstileToken })
                         });
                         const riskResult = await riskResp.json();
+
+                        // A non-2xx response (400 malformed email/Turnstile
+                        // fail, 405 wrong method, 429 rate-limited) never has
+                        // a `block` key — it has `success:false` + either
+                        // `message` (405/400 invalid-email path) or `reason`
+                        // (429/Turnstile path). Check both field names before
+                        // falling back to a generic message.
+                        if (!riskResp.ok) {
+                            const requestError = new Error(riskResult.message || riskResult.reason || 'Could not validate this email. Please check it and try again.');
+                            requestError.isRiskBlock = true;
+                            throw requestError;
+                        }
+
                         if (riskResult.block) {
-                            // Tag the error object itself instead of guessing from
-                            // its message text — a disposable/spam-email reason
-                            // string doesn't start with "Security Restriction", so
-                            // the old text-prefix check silently let blocked emails
-                            // through. isRiskBlock can't be confused with a network
-                            // or JSON-parse failure below.
                             const blockedError = new Error(riskResult.reason || "This email address failed our risk check.");
                             blockedError.isRiskBlock = true;
                             throw blockedError;
@@ -288,14 +335,11 @@ if (session_status() === PHP_SESSION_NONE) {
                         if (riskError.isRiskBlock) {
                             throw riskError;
                         }
-                        // Only genuine network/parse errors from our own endpoint
-                        // reach here now — fail open, don't block signup over that.
-                        console.warn('Email risk check unavailable, continuing:', riskError);
+                        // Only genuine network/parse errors from our own
+                        // endpoint reach here — fail open, don't block
+                        // signup over that.
                     }
 
-                    // Proceed with standard sign-up if clear
-                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                    const user = userCredential.user;
                     let role = 'customer';
 
                     const userData = {
@@ -313,26 +357,27 @@ if (session_status() === PHP_SESSION_NONE) {
                         created_at: firebase.firestore.FieldValue.serverTimestamp()
                     };
 
+                    // Proceed with standard sign-up if clear
+                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                    const user = userCredential.user;
+
+                    // password field intentionally NOT written here —
+                    // firestore.rules now blocks any client write to
+                    // `customers` that includes a `password` key. Firebase
+                    // Auth is the real password store; this document never
+                    // needs its own plaintext copy.
                     await db.collection('customers').doc(user.uid).set({
                         ...userData,
-                        password: password, 
                         name: fullName,
                         deviceHashes: [deviceHash],
-                        // Marks this account as subject to the email-verification
-                        // login gate in set_session.php. Existing accounts (created
-                        // before this field existed) are left untouched, so this
-                        // only applies going forward.
                         requireEmailVerification: true
                     });
 
-                    // Send our own branded verification email (custom
-                    // sender + button + landing page on our own domain)
-                    // instead of Firebase's default firebaseapp.com flow.
-                    // Best-effort: if this fails (rare - e.g. a transient
-                    // network blip), we still let the account exist rather
-                    // than losing the Firestore doc/Auth user we just
-                    // created; the user can request another one from the
-                    // login page's resend link.
+                    // Send our own branded verification email instead of
+                    // Firebase's default firebaseapp.com flow. Best-effort:
+                    // if this fails, still let the account exist rather than
+                    // losing the Auth user just created; the person can
+                    // request another one from the login page's resend link.
                     try {
                         const freshIdTokenForVerify = await user.getIdToken();
                         await fetch('send_verification_email.php', {
@@ -360,11 +405,13 @@ if (session_status() === PHP_SESSION_NONE) {
                     }
 
                     window.location.href = 'index.php?registered=verify_pending';
+
                 } catch (error) {
-                    errorBox.innerHTML = '<i class="fa-solid fa-circle-exclamation mr-2"></i> ' + error.message;
+                    console.error(error);
+                    errorBox.innerText = error.message || 'Registration failed. Please try again.';
                     errorBox.style.display = 'block';
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="fa-solid fa-user-plus mr-2"></i> Create Account';
+                    btn.innerHTML = '<i class="fa-solid fa-user-plus mr-2"></i> Join Experience';
                 }
             };
         }
