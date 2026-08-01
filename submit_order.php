@@ -14,7 +14,7 @@
  */
 
 require_once __DIR__ . '/includes/firebase_admin.php';
-require_once __DIR__ . '/includes/ipqs_client.php';
+require_once __DIR__ . '/includes/abstractapi_ip_client.php';
 
 use Google\Cloud\Firestore\FieldValue;
 
@@ -127,29 +127,29 @@ if ($deviceHash !== null) {
     }
 }
 
-// --- 3c. IPQualityScore IP reputation: a signal, not a hard block.
-// VPN/proxy usage alone is common and legitimate (weighted lightly); only
-// combined with a high fraud_score or recent abuse does this carry real
-// weight. Fails open (skips scoring) if IPQS is unreachable/unconfigured —
-// never block a checkout over a third-party vendor outage. ---
+// --- 3c. AbstractAPI IP Intelligence: a signal, not a hard block.
+// VPN/proxy usage alone is common and legitimate (weighted lightly, no
+// auto-restriction); Tor or a flagged-abuse IP is treated as higher
+// confidence risk. Relay/mobile are deliberately NOT penalized - relay
+// covers privacy features like Apple's iCloud Private Relay used by
+// many ordinary iPhone customers, and mobile is just "this is a phone
+// carrier connection," both completely normal for real customers.
+// Fails open (skips scoring) if unreachable/unconfigured — never block
+// a checkout over a third-party vendor outage.
 if ($requestIp !== 'unknown') {
     try {
-        $ipqsResult = bloom_ipqs_check_ip($requestIp);
-        $ipFraudScore = (int) ($ipqsResult['fraud_score'] ?? 0);
-        $isProxyOrVpn = ($ipqsResult['proxy'] ?? false) === true || ($ipqsResult['vpn'] ?? false) === true;
-        $isTor = ($ipqsResult['tor'] ?? false) === true;
-        $ipRecentAbuse = ($ipqsResult['recent_abuse'] ?? false) === true;
+        $ipResult = bloom_abstractapi_check_ip($requestIp);
 
-        if ($isTor || $ipRecentAbuse || $ipFraudScore >= 85) {
+        if ($ipResult['tor'] || $ipResult['abuse']) {
             $accumulatedScoreBump += 40;
-            $localFraudFlags[] = 'High-risk IP reputation (IPQS)';
+            $localFraudFlags[] = 'High-risk IP reputation (Tor/abuse flagged)';
             $triggerAutoRestriction = true;
-        } elseif ($isProxyOrVpn && $ipFraudScore >= 50) {
+        } elseif ($ipResult['vpn'] || $ipResult['proxy']) {
             $accumulatedScoreBump += 15;
-            $localFraudFlags[] = 'VPN/Proxy detected alongside elevated IP risk (IPQS)';
+            $localFraudFlags[] = 'VPN/Proxy detected';
         }
     } catch (\Throwable $e) {
-        error_log('bloom_ipqs_check_ip failed, failing open: ' . $e->getMessage());
+        error_log('bloom_abstractapi_check_ip failed, failing open: ' . $e->getMessage());
     }
 }
 

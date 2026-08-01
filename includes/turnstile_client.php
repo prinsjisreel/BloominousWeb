@@ -9,8 +9,8 @@
  *
  * The SITE key is public and lives in register.php's HTML (it has to —
  * the widget runs in the browser). Only the SECRET key is sensitive, and
- * it never leaves this file — same trust boundary as IPQS's API key in
- * ipqs_client.php.
+ * it never leaves this file — same trust boundary any other server-only
+ * API secret in this project follows (e.g. config.local.php's env vars).
  */
 
 require_once __DIR__ . '/../config.local.php';
