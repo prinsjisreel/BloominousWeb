@@ -466,6 +466,37 @@ if ($amount <= 0 && empty($items)) {
             const phone = normalizePhone(rawPhone); // Fully sanitizes inputs dynamically
             const isTestNumber = testPhoneNumbers.includes(phone);
 
+            // Pre-check: catches an obviously disposable/VOIP number BEFORE
+            // spending a real SMS credit on it. This is a UX/cost-saving
+            // convenience only — NOT the actual security boundary. The real,
+            // unbypassable enforcement lives server-side in submit_order.php
+            // (section 3d), which runs regardless of whether this check ever
+            // fires. Skip it for registered test numbers, and fail OPEN on
+            // any error — never block a real customer over this endpoint
+            // being unreachable.
+            if (!isTestNumber) {
+                try {
+                    const freshToken = await auth.currentUser.getIdToken();
+                    const riskResp = await fetch('../check_phone_risk.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + freshToken,
+                        },
+                        body: JSON.stringify({ phone }),
+                    });
+                    if (riskResp.ok) {
+                        const riskResult = await riskResp.json();
+                        if (riskResult.block) {
+                            alert(riskResult.reason || 'This phone number can\'t be used for verification.');
+                            return;
+                        }
+                    }
+                } catch (riskError) {
+                    console.warn('Phone risk pre-check failed, proceeding anyway:', riskError);
+                }
+            }
+
             const badge = document.getElementById('smsTestModeBadge');
             const subtitle = document.getElementById('smsModalSubtitle');
             if (isTestNumber) {

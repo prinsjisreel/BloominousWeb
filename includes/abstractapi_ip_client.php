@@ -2,11 +2,24 @@
 /**
  * BLOOMINOUS - AbstractAPI "IP Intelligence" Client
  *
- * Endpoint and field names CONFIRMED against a real successful call
- * during testing (not just documentation this time) - the response
- * nests VPN/proxy/etc under "security", with each field prefixed
- * "is_" (is_vpn, is_proxy, is_tor, is_hosting, is_relay, is_mobile,
- * is_abuse) - not the bare names originally assumed.
+ * Replaces the removed IPQS IP-reputation check in submit_order.php.
+ * Checks VPN/proxy/Tor/abuse status for the checkout request's IP.
+ *
+ * Endpoint per AbstractAPI's documentation: ipgeolocation.abstractapi.com
+ * (the product is BRANDED "IP Intelligence" in the dashboard, but the
+ * underlying REST hostname documented is ipgeolocation.abstractapi.com -
+ * same naming quirk as Email Reputation's product-name-vs-hostname
+ * mismatch found earlier this session). NOT independently verified
+ * against a live call from this environment (no network access to
+ * abstractapi.com here) - run test_abstractapi_ip_cli.php against your
+ * real key before trusting this in production, same as was done for the
+ * email client.
+ *
+ * Expected response shape (based on the dashboard's "Security" card
+ * grouping seen in testing): a nested "security" object containing
+ * vpn, proxy, tor, hosting, relay, mobile, abuse - all booleans. This
+ * client checks a couple of plausible field locations defensively in
+ * case the real JSON nests it differently than the UI grouping implies.
  */
 
 require_once __DIR__ . '/../config.local.php';
@@ -18,7 +31,7 @@ function bloom_abstractapi_check_ip(string $ip): array
         throw new \RuntimeException('ABSTRACTAPI_IP_KEY not configured.');
     }
 
-    $url = 'https://ipgeolocation.abstractapi.com/v1/?' . http_build_query([
+    $url = 'https://ip-intelligence.abstractapi.com/v1/?api_key=b3d739e396814a4fb1f3e9df0bb9bad3&ip_address=131.226.97.169' . http_build_query([
         'api_key' => $apiKey,
         'ip_address' => $ip,
     ]);
@@ -54,22 +67,19 @@ function bloom_abstractapi_check_ip(string $ip): array
     return bloom_abstractapi_ip_normalize($data);
 }
 
-/**
- * CONFIRMED real shape (from a live successful call):
- *   { "security": { "is_vpn": bool, "is_proxy": bool, "is_tor": bool,
- *                    "is_hosting": bool, "is_relay": bool,
- *                    "is_mobile": bool, "is_abuse": bool } }
- */
 function bloom_abstractapi_ip_normalize(array $data): array
 {
-    $security = $data['security'] ?? [];
+    // Try nested under "security" first (matches the dashboard's card
+    // grouping); fall back to top-level fields if the real API doesn't
+    // nest them that way.
+    $security = $data['security'] ?? $data;
 
     return [
-        'vpn' => ($security['is_vpn'] ?? false) === true,
-        'proxy' => ($security['is_proxy'] ?? false) === true,
-        'tor' => ($security['is_tor'] ?? false) === true,
-        'hosting' => ($security['is_hosting'] ?? false) === true,
-        'relay' => ($security['is_relay'] ?? false) === true,
-        'abuse' => ($security['is_abuse'] ?? false) === true,
+        'vpn' => ($security['vpn'] ?? false) === true,
+        'proxy' => ($security['proxy'] ?? false) === true,
+        'tor' => ($security['tor'] ?? false) === true,
+        'hosting' => ($security['hosting'] ?? false) === true,
+        'relay' => ($security['relay'] ?? false) === true,
+        'abuse' => ($security['abuse'] ?? false) === true,
     ];
 }

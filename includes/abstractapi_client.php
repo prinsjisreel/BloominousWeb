@@ -38,7 +38,7 @@ function bloom_abstractapi_check_email(string $email): array
         throw new \RuntimeException('ABSTRACTAPI_EMAIL_KEY not configured.');
     }
 
-    $url = 'https://emailreputation.abstractapi.com/v1/?' . http_build_query([
+    $url = 'https://phoneintelligence.abstractapi.com/v1/?api_key=8dcf751c09a140dda1e7b7df5e69c904&phone=+14152007986' . http_build_query([
         'api_key' => $apiKey,
         'email' => $email,
     ]);

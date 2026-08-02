@@ -15,6 +15,7 @@
 
 require_once __DIR__ . '/includes/firebase_admin.php';
 require_once __DIR__ . '/includes/abstractapi_ip_client.php';
+require_once __DIR__ . '/includes/abstractapi_phone_client.php';
 
 use Google\Cloud\Firestore\FieldValue;
 
@@ -103,6 +104,7 @@ $isGift = ($body['isGift'] ?? false) === true;
 $branchId = (string) $body['branchId'];
 $customerLat = isset($body['customerLat']) && $body['customerLat'] !== '' ? (float) $body['customerLat'] : null;
 $customerLng = isset($body['customerLng']) && $body['customerLng'] !== '' ? (float) $body['customerLng'] : null;
+$normalizedPhone = preg_replace('/[^0-9+]/', '', $body['phone']);
 
 // Server-captured only — never trust an IP the client claims in the body.
 // X-Forwarded-For may hold a chain (client, proxy1, proxy2...); the first
@@ -153,14 +155,92 @@ if ($requestIp !== 'unknown') {
     }
 }
 
+// --- 3d. AbstractAPI Phone Validation + cross-account reuse — the REAL
+// enforcement. check_phone_risk.php (called from checkout.php before SMS
+// verification) is only a UX convenience; a scripted request could skip
+// it entirely, so this section is what actually can't be bypassed —
+// every order passes through here regardless of what the client did.
+//
+// Score-based, not a hard block, matching 3b/3c: this system never
+// rejects a real checkout in the moment, it scores the account and lets
+// isRestricted gate FUTURE orders instead (see section 6 below).
+//
+// Disposable/VOIP numbers get real weight (+35, auto-restriction) since
+// a legitimate flower delivery essentially requires a real, reachable
+// number — there's little honest reason to use a burner one here.
+//
+// Cross-account reuse (same phone tied to a DIFFERENT uid already) is a
+// meaningfully stronger signal than IP/device sharing, since phone
+// numbers aren't naturally shared across strangers the way IPs are — but
+// still not proof on its own (a family could legitimately share one
+// phone across two accounts), so it adds real weight without an
+// automatic restriction.
+try {
+    $phoneResult = bloom_abstractapi_check_phone($normalizedPhone);
+
+    if ($phoneResult['disposable'] || $phoneResult['voip']) {
+        $accumulatedScoreBump += 35;
+        $localFraudFlags[] = 'Disposable/VOIP phone number used at checkout';
+        $triggerAutoRestriction = true;
+    }
+} catch (\Throwable $e) {
+    error_log('bloom_abstractapi_check_phone failed, failing open: ' . $e->getMessage());
+}
+
+try {
+    $phoneReuseQuery = $db->collection('orders')->where('phone', '=', $normalizedPhone)->documents();
+    foreach ($phoneReuseQuery as $reuseDoc) {
+        if (!$reuseDoc->exists()) continue;
+        $reuseData = $reuseDoc->data();
+        if (($reuseData['user_id'] ?? null) !== $uid) {
+            $accumulatedScoreBump += 25;
+            $localFraudFlags[] = 'Phone number already associated with a different account';
+            break;
+        }
+    }
+} catch (\Throwable $e) {
+    error_log('Phone reuse check failed, failing open: ' . $e->getMessage());
+}
+
+// --- 3e. Delivery address reuse — same identity-reuse pattern as phone,
+// but targeting something a scammer with a genuinely fresh email, device,
+// and SIM STILL can't easily rotate: where the flowers actually need to
+// be delivered. A brand-new "clean" account is far less clean if it's
+// shipping to an address that's already tied to a different, previously
+// flagged customer.
+//
+// Lightly normalized (lowercase, trimmed, collapsed whitespace) so
+// trivial formatting differences (extra spaces) don't cause a false
+// "different address" miss — not a full address-parsing solution, just
+// enough to catch the common case of someone reusing the literal same
+// text across accounts.
+$normalizedAddress = strtolower(trim(preg_replace('/\s+/', ' ', (string) $body['address'])));
+
+try {
+    $addressReuseQuery = $db->collection('orders')->where('normalizedAddress', '=', $normalizedAddress)->documents();
+    foreach ($addressReuseQuery as $reuseDoc) {
+        if (!$reuseDoc->exists()) continue;
+        $reuseData = $reuseDoc->data();
+        if (($reuseData['user_id'] ?? null) !== $uid) {
+            $accumulatedScoreBump += 20;
+            $localFraudFlags[] = 'Delivery address already associated with a different account';
+            break;
+        }
+    }
+} catch (\Throwable $e) {
+    error_log('Address reuse check failed, failing open: ' . $e->getMessage());
+}
+
 // --- 4. Velocity check: any order from this uid in the last 5 minutes? ---
 
 $fiveMinAgo = new DateTimeImmutable('-5 minutes');
 $ordersQuery = $db->collection('orders')->where('user_id', '=', $uid)->documents();
 
 $hasRecentVelocitySpam = false;
+$orderCount = 0; // ← NEW: counted in the same single pass, no extra query
 foreach ($ordersQuery as $orderDoc) {
     if (!$orderDoc->exists()) continue;
+    $orderCount++;
     $oData = $orderDoc->data();
     $ts = $oData['createdAt'] ?? $oData['timestamp'] ?? null;
     if ($ts instanceof \Google\Cloud\Core\Timestamp) {
@@ -171,6 +251,11 @@ foreach ($ordersQuery as $orderDoc) {
         }
     }
 }
+// Safe even with the early `break` above: if the loop breaks, at least
+// one order was already counted before it did, so $orderCount is still
+// correctly >= 1 either way — "was this truly their very first order"
+// stays accurate regardless of where the loop stopped.
+$isFirstOrder = ($orderCount === 0);
 
 if ($hasRecentVelocitySpam) {
     $accumulatedScoreBump += 35;
@@ -205,6 +290,21 @@ if (!$isGift && $customerLat !== null && $customerLng !== null) {
     }
 }
 
+// --- 5b. Graduated trust: amplify (never originate) risk on a genuinely
+// first-ever order. This targets the hardest case in fraud prevention —
+// someone with a brand-new email, device, AND SIM, none of which have
+// any history anywhere yet, so no reputation-based check above can catch
+// them alone. Rather than inventing a new signal from nothing (which
+// would risk punishing completely innocent new customers), this only
+// AMPLIFIES risk that's already been found by another layer above —
+// "first order" + "already flagged for something else" is meaningfully
+// more suspicious than either fact alone, so it adds real extra weight,
+// but a clean first order with zero other flags is untouched.
+if ($isFirstOrder && $accumulatedScoreBump > 0) {
+    $accumulatedScoreBump += 20;
+    $localFraudFlags[] = 'First order combined with pre-existing risk signal(s)';
+}
+
 // --- 6. Apply the score to the customer profile (server is the only writer) ---
 $checkAutoBan = false;
 $baseScore = (int) ($customer['fraudScore'] ?? 0);
@@ -223,6 +323,22 @@ if ($triggerAutoRestriction) {
     $customerUpdate['isRestricted'] = false;
     $customerUpdate['fraudScore'] = min($ultimateScore, 10);
     $ultimateScore = $customerUpdate['fraudScore'];
+} elseif ($accumulatedScoreBump === 0 && $baseScore > 10) {
+    // Reward good behavior: a checkout that raised zero new flags at all
+    // (nothing from device/IP/phone/address/velocity/geo) is treated as
+    // evidence the account isn't currently doing anything wrong — even
+    // if it's still carrying an elevated score from something earlier.
+    // Applies regardless of payment method, including COD.
+    //
+    // Floored at 10, NOT 0 — this matches the OTP-recovery reset above
+    // (min($ultimateScore, 10)), which is this app's actual established
+    // "clean baseline," not zero. Once an account works its way back
+    // down to 10 through clean orders, it freezes there: the condition
+    // ($baseScore > 10) stops applying entirely once the score reaches
+    // that floor, so it never decays further and never dips below it.
+    $decayedScore = max(10, $baseScore - 5);
+    $customerUpdate['fraudScore'] = $decayedScore;
+    $ultimateScore = $decayedScore;
 }
 
 if ($ultimateScore >= 100) {
@@ -299,7 +415,6 @@ $invoiceId = $db->runTransaction(function ($transaction) use ($db) {
 
 // --- 8. Create the order (server-computed fraud fields only) ---
 $finalTotal = $subtotal + $shippingFee;
-$normalizedPhone = preg_replace('/[^0-9+]/', '', $body['phone']);
 
 $orderRef = $db->collection('orders')->add([
     'user_id' => $uid,
@@ -310,6 +425,7 @@ $orderRef = $db->collection('orders')->add([
     'recipientPhone' => $body['phone'],
     'email' => $body['email'] ?? '',
     'address' => $body['address'],
+    'normalizedAddress' => $normalizedAddress,
     'phone' => $normalizedPhone,
     'payment_method' => $body['paymentMethod'],
     'items' => $items,

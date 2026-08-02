@@ -235,6 +235,30 @@
                 btn.innerText = 'Logging in...';
                 errorBox.style.display = 'none';
 
+                // ← NEW: real, server-side rate limit — the client-side
+                // lockout above is a UX nicety only (localStorage-based,
+                // trivially bypassed). This is the actual security
+                // boundary, checked BEFORE Firebase Auth ever runs.
+                try {
+                    const rateLimitResp = await fetch('check_login_risk.php', {
+                        method: 'POST',
+                    });
+                    if (rateLimitResp.ok) {
+                        const rateLimitResult = await rateLimitResp.json();
+                        if (rateLimitResult.block) {
+                            errorBox.innerText = rateLimitResult.reason || 'Too many attempts. Please wait and try again.';
+                            errorBox.style.display = 'block';
+                            btn.disabled = false;
+                            btn.innerText = 'Login';
+                            return;
+                        }
+                    }
+                } catch (rateLimitError) {
+                    // Fail open — never block a real login over this
+                    // endpoint being unreachable.
+                    console.warn('Login rate-limit check failed, proceeding anyway:', rateLimitError);
+                }
+
                 let targetUser = null;
                 let userDocData = null;
                 let matchedCollection = '';
