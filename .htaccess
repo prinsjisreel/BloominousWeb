@@ -1,0 +1,9 @@
+<Files "serviceAccountKey.json">
+    Require all denied
+</Files>
+<Files "config.local.php">
+    Require all denied
+</Files>
+
+RewriteEngine On
+RewriteRule ^verify/?$ verify_email.php [L,QSA]

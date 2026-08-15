@@ -1,0 +1,12 @@
+{
+    "require": {
+        "phpmailer/phpmailer": "^7.1",
+        "kreait/firebase-php": "^5.26",
+        "google/cloud-firestore": "^1.19"
+    },
+    "config": {
+        "platform": {
+            "ext-grpc": "1.57.0"
+        }
+    }
+}

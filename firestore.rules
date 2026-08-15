@@ -1,0 +1,234 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+         
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        getRole() == 'admin' || 
+        getRole() == 'super-admin'
+      );
+    }
+    
+    function isStaff() {
+      return isSignedIn() && getRole() in ['admin', 'super-admin', 'staff', 'employee'];
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    // --- Validation Blueprints ---
+    // Two order schemas exist in this app:
+    //  - Customer web checkout (submit_order.php, via Admin SDK): user_id / total_price
+    //  - In-store POS (pos_terminal.php, direct client write, subject to
+    //    these rules): customer_id / total_amount, status 'completed'
+    // Both are accepted here since order_details.php already reads both
+    // field-name variants back out.
+    function isValidOrder(data) {
+      return (data.user_id is string || data.customer_id is string) && 
+             (data.total_price is number || data.total_amount is number) && 
+             data.status in ['pending', 'processing', 'paid', 'shipped', 'delivered', 'cancelled', 'completed'] &&
+             data.keys().hasAny(['user_id', 'customer_id']) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+             (!('customer_name' in data) || (data.customer_name is string && data.customer_name.size() <= 256)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 20));
+    }
+    
+    function isValidUser(data) {
+      return data.email is string && 
+             (!('username' in data) || data.username is string) &&
+             (!('role' in data) || data.role in ['customer', 'admin', 'super-admin', 'staff', 'employee', 'delivery']);
+    }
+    
+    function isHardcodedSuperAdmin() {
+      return isSignedIn() && request.auth.token.email == '789jojoalvarado@gmail.com';
+    }
+    
+    // --- Collection Rules ---
+    
+    // 1. Users Collection (Management Console Profiles)
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming()) && (
+        (incoming().role == 'customer') ||
+        (incoming().role == 'super-admin' && isHardcodedSuperAdmin())
+      );
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        (incoming().role == existing().role) || isAdmin() ||
+        (incoming().role == 'super-admin' && isHardcodedSuperAdmin())
+      );
+    }
+    
+    // 2. Customers Collection (E-Commerce Client Profiles)
+    // ← UPDATED: 'password' added to both blocked-field lists below, so
+    // no client write (create OR update) can ever place a plaintext
+    // password into this document again, going forward.
+    match /customers/{userId} {
+      allow read: if true;
+      allow create: if isOwner(userId) && 
+                    !request.resource.data.keys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil', 'password']);
+      allow update: if (isOwner(userId) && 
+                       !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fraudScore', 'fraudFlags', 'status', 'isRestricted', 'restrictedUntil', 'password'])) 
+                    || isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // 3. Customer OTPs
+    match /customer_otps/{email} {
+      allow read, write: if true;
+    }
+    
+    // 4. Blacklisted Emails Directory
+    match /blocked_emails/{email} {
+      allow read: if true;
+      allow write: if isAdmin() || isSignedIn(); 
+    }
+    
+    // 5. Suppliers Collection
+    match /suppliers/{supplierId} {
+      allow read, write: if true;
+    }
+    
+    // 6. Promos Collection
+    match /promos/{promoId} {
+      allow read, write: if true;
+    }
+    
+    // 7. Settings Collection
+    match /settings/{settingsId} {
+      allow read, write: if true;
+    }
+    
+    // 8. Notifications Collection
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+    
+    // 9. Freshness Analysis Collection
+    match /freshness_analysis/{analysisId} {
+      allow read, write: if true;
+    }
+    
+    // 10. Branches Collection & Sub-collections
+    match /branches/{branchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+      
+      match /inventory/{productId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+      match /spoilage/{spoilageId} {
+        allow read, write: if true;
+      }
+      match /reservations/{reservationId} {
+        allow read, write: if true;
+      }
+    }
+    
+    match /{path=**}/inventory/{productId} {
+      allow read: if true;
+    }
+    
+    // 11. Orders Collection - FORTIFIED ENTRY GATE
+    match /orders/{orderId} {
+      allow get: if isOwner(existing().user_id) || isAdmin();
+      allow list: if isSignedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
+      
+      // Customer web-checkout orders are created exclusively by
+      // submit_order.php via the Admin SDK, which bypasses these rules and
+      // performs authoritative velocity/geo fraud scoring before writing.
+      // isStaff() stays permitted so pos_terminal.php (in-store, internal
+      // cashier orders — not subject to the customer fraud model) keeps
+      // working as a direct client write.
+      allow create: if isStaff() && isValidOrder(incoming());
+                    
+      allow update: if isSignedIn() && (
+        (isOwner(existing().user_id) && 
+          existing().status == 'pending' && 
+          incoming().status == 'cancelled' && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt'])) ||
+          
+        (isOwner(existing().user_id) && 
+          incoming().status in ['processing', 'paid'] && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'payment_status', 'paidAt'])) ||
+          
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // 12. Connection Test
+    match /test/connection {
+      allow read: if isSignedIn();
+    }
+
+    // 13. Void/Refund Records (order_details.php's Void/Refund workflow)
+    match /voidRefunds/{refundId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+    }
+
+    // 14. Sales Ledger — negative entries recorded alongside a void/refund
+    match /salesLedger/{entryId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+    }
+
+    // 15. Sequential ID counters (invoices, refunds)
+    match /counters/{counterId} {
+      allow read, write: if isStaff();
+    }
+
+    // 16. Sales Anomalies Detection log — written by pos_terminal.php and
+    // order_details.php whenever a check is flagged, read by
+    // sales_anomalies.php's dashboard.
+    match /salesAnomalies/{anomalyId} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isAdmin(); // dashboard-side "mark as reviewed"
+    }
+
+    // 17. Banned Devices Directory — mirrors blocked_emails. Device hashes
+    // tied to a confirmed/auto-escalated fraud case (fraudScore >= 100).
+    // Read openly so register.php can block signup before an account even
+    // exists (same pattern as the blocked_emails check). Written only by
+    // admins client-side; submit_order.php's auto-ban path writes here via
+    // the Admin SDK, which bypasses these rules entirely.
+    match /banned_devices/{deviceHash} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

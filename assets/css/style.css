@@ -1,0 +1,61 @@
+/* --- Login Styles --- */
+/* Gamitin ang login-body class na nilagay natin sa HTML */
+.login-body {
+    display: flex;
+    justify-content: center;
+    align-items: center;     
+    min-height: 100vh;      
+    background: #FFF8DC;    
+    margin: 0;
+}
+
+.login-container {
+    width: 100%;
+    max-width: 400px; 
+    padding: 20px;
+}
+
+.login-box {
+    background: var(--color-white);
+    padding: 3rem;
+    border-radius: 2rem;
+    box-shadow: 0 2rem 3rem var(--color-light);
+    text-align: center;
+    width: 100%;
+    max-width: 400px;
+}
+
+.login-box h2 {
+    margin-bottom: 1rem;
+    font-size: 2rem;
+}
+
+.input-group {
+    width: 100%;
+    margin-bottom: 1rem;
+}
+
+.input-group input {
+    width: 100%; /* Sinasakop ang buong lapad ng login-box */
+    padding: 12px 20px;
+    border: 1px solid #7d8da1;
+    border-radius: 12px;
+    font-size: 1rem;
+    box-sizing: border-box; /* Importante para hindi lumampas ang padding */
+}
+
+.btn-login {
+    width: 100%;
+    padding: 12px;
+    background-color: #fff9e6; /* Kulay na katulad sa screenshot mo */
+    border: 1px solid black;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 1rem;
+}
+
+.btn-login:hover {
+    box-shadow: 0 0.5rem 1rem var(--color-primary);
+    transform: translateY(-2px);
+}

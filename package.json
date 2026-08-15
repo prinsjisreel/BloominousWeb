@@ -1,0 +1,9 @@
+{
+  "name": "bloominous-web",
+  "version": "1.0.0",
+  "description": "BLOOMINOUS Web Application",
+  "scripts": {
+    "start": "php -S 0.0.0.0:3000"
+  },
+  "dependencies": {}
+}
