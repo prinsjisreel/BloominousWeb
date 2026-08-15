@@ -483,7 +483,6 @@
                             window.location.href = 'templates/shop.php';
                         }
                     } else {
-<<<<<<< HEAD
                         // None of set_session.php's error messages ("Missing
                         // ID token", "Invalid or expired session", "Could not
                         // reach Firestore to resolve role"...) reveal whether
@@ -509,12 +508,6 @@
                         return;
                     }
 
-=======
-                        throw new Error('Failed to establish session.');
-                    }
-                } catch (error) {
-                    console.error(error);
->>>>>>> e40752bc8317b6e222960ae6c39345e76e216a4e
                     registerFailedAttempt();
                     const state = getLockoutState();
                     if (!isCurrentlyLocked(state)) {
