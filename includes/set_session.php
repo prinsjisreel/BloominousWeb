@@ -45,6 +45,7 @@ try {
     $uid = bloom_verify_id_token($idToken);
 } catch (\Throwable $e) {
     http_response_code(401);
+<<<<<<< HEAD
     // TEMP DEBUG — remove getMessage()/getFile()/getLine() once the real
     // cause is found. Never ship exception internals to the client
     // long-term (can leak file paths); this is diagnostic-only.
@@ -54,6 +55,9 @@ try {
         'message' => 'Invalid or expired session',
         'debug' => $e->getMessage(), // TEMP — delete this line after debugging
     ]);
+=======
+    echo json_encode(['success' => false, 'message' => 'Invalid or expired session']);
+>>>>>>> e40752bc8317b6e222960ae6c39345e76e216a4e
     exit();
 }
 
