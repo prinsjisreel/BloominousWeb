@@ -483,10 +483,31 @@
                             window.location.href = 'templates/shop.php';
                         }
                     } else {
-                        throw new Error('Failed to establish session.');
+                        // None of set_session.php's error messages ("Missing
+                        // ID token", "Invalid or expired session", "Could not
+                        // reach Firestore to resolve role"...) reveal whether
+                        // the EMAIL/PASSWORD were correct — by the time we're
+                        // here, Firebase Auth already accepted them. Safe to
+                        // show the real message instead of a generic one.
+                        const sessionError = new Error(sessionResult.message || 'Failed to establish session.');
+                        sessionError.isSessionError = true; // infra failure, not a bad-credential attempt
+                        throw sessionError;
                     }
                 } catch (error) {
                     console.error(error);
+
+                    if (error.isSessionError) {
+                        // Credentials were fine — the server-side session
+                        // step broke. Show the real reason, and don't burn
+                        // one of the user's lockout attempts over something
+                        // that isn't their fault.
+                        errorBox.innerText = error.message;
+                        errorBox.style.display = 'block';
+                        btn.disabled = false;
+                        btn.innerText = 'Login';
+                        return;
+                    }
+
                     registerFailedAttempt();
                     const state = getLockoutState();
                     if (!isCurrentlyLocked(state)) {

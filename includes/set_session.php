@@ -45,7 +45,13 @@ try {
     $uid = bloom_verify_id_token($idToken);
 } catch (\Throwable $e) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Invalid or expired session']);
+    // Server-side diagnostic log only — never echoed to the client.
+    // Safe to keep permanently; it's just PHP's error log, not a response body.
+    error_log('set_session.php verifyIdToken failed: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid or expired session',
+    ]);
     exit();
 }
 
