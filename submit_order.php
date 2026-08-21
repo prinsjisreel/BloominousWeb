@@ -85,6 +85,40 @@ if ($isRestricted && $otpVerified) {
     }
 }
 
+// --- 2b. Email mail-server existence check — free (plain DNS, no API
+// quota), gated to accounts that already carry some fraud score so it
+// never adds latency to an ordinary customer's checkout. Blocks THIS
+// order only, never the account — a temporary DNS/mail-server outage on
+// a real domain is possible and shouldn't cost someone their account,
+// just this one attempt (they can simply retry).
+//
+// Uses the same canary pattern as email_domain_policy.php: confirm OUR
+// OWN DNS resolution is even working (via gmail.com) before trusting a
+// failure result for the customer's domain — otherwise a local DNS
+// hiccup on our end would incorrectly block every checkout at once,
+// not just the ones that deserve it.
+require_once __DIR__ . '/includes/email_domain_policy.php';
+
+$customerBaseScore = (int) ($customer['fraudScore'] ?? 0);
+if ($customerBaseScore > 0) {
+    $customerEmail = $customer['email'] ?? null;
+    if ($customerEmail) {
+        $atPos = strrpos($customerEmail, '@');
+        $emailDomain = $atPos !== false ? substr($customerEmail, $atPos + 1) : null;
+
+        // bloom_domain_has_mail_server() already runs its own gmail.com
+        // canary check internally and fails open (returns true) if OUR
+        // OWN DNS looks broken — no need to duplicate that check here.
+        if ($emailDomain && !bloom_domain_has_mail_server($emailDomain)) {
+            bloom_json_response([
+                'success' => false,
+                'code' => 'EMAIL_UNREACHABLE',
+                'message' => 'We couldn\'t verify your email address is still active. Please update your email or try again shortly.',
+            ], 403);
+        }
+    }
+}
+
 // --- 3. Validate the minimum shape of the order payload ---
 $required = ['name', 'phone', 'address', 'items', 'subtotal', 'shippingFee', 'paymentMethod', 'branchId'];
 foreach ($required as $field) {
@@ -116,14 +150,16 @@ $deviceHash = isset($body['deviceHash']) && preg_match('/^[a-f0-9]{64}$/', $body
 
 // --- 3b. Banned device gate: a device tied to a prior auto-ban skips
 // straight to restriction, independent of this account's own score ---
-$accumulatedScoreBump = 10;
+$orderRiskScore = 10; // this order's OWN stored rating — always starts at 10
+$customerScoreBump = 0; // what ADDS to the customer's cumulative score — starts at 0, only rises when something is actually found
 $localFraudFlags = [];
 $triggerAutoRestriction = false;
 
 if ($deviceHash !== null) {
     $bannedDeviceSnap = $db->collection('banned_devices')->document($deviceHash)->snapshot();
     if ($bannedDeviceSnap->exists()) {
-        $accumulatedScoreBump += 60;
+        $orderRiskScore += 60;
+        $customerScoreBump += 60;
         $localFraudFlags[] = 'Order placed from a previously banned device';
         $triggerAutoRestriction = true;
     }
@@ -143,11 +179,13 @@ if ($requestIp !== 'unknown') {
         $ipResult = bloom_abstractapi_check_ip($requestIp);
 
         if ($ipResult['tor'] || $ipResult['abuse']) {
-            $accumulatedScoreBump += 40;
+            $orderRiskScore += 40;
+            $customerScoreBump += 40;
             $localFraudFlags[] = 'High-risk IP reputation (Tor/abuse flagged)';
             $triggerAutoRestriction = true;
         } elseif ($ipResult['vpn'] || $ipResult['proxy']) {
-            $accumulatedScoreBump += 15;
+            $orderRiskScore += 15;
+            $customerScoreBump += 15;
             $localFraudFlags[] = 'VPN/Proxy detected';
         }
     } catch (\Throwable $e) {
@@ -179,7 +217,8 @@ try {
     $phoneResult = bloom_abstractapi_check_phone($normalizedPhone);
 
     if ($phoneResult['disposable'] || $phoneResult['voip']) {
-        $accumulatedScoreBump += 35;
+        $orderRiskScore += 35;
+        $customerScoreBump += 35;
         $localFraudFlags[] = 'Disposable/VOIP phone number used at checkout';
         $triggerAutoRestriction = true;
     }
@@ -193,7 +232,8 @@ try {
         if (!$reuseDoc->exists()) continue;
         $reuseData = $reuseDoc->data();
         if (($reuseData['user_id'] ?? null) !== $uid) {
-            $accumulatedScoreBump += 25;
+            $orderRiskScore += 25;
+            $customerScoreBump += 25;
             $localFraudFlags[] = 'Phone number already associated with a different account';
             break;
         }
@@ -222,7 +262,8 @@ try {
         if (!$reuseDoc->exists()) continue;
         $reuseData = $reuseDoc->data();
         if (($reuseData['user_id'] ?? null) !== $uid) {
-            $accumulatedScoreBump += 20;
+            $orderRiskScore += 20;
+            $customerScoreBump += 20;
             $localFraudFlags[] = 'Delivery address already associated with a different account';
             break;
         }
@@ -258,7 +299,8 @@ foreach ($ordersQuery as $orderDoc) {
 $isFirstOrder = ($orderCount === 0);
 
 if ($hasRecentVelocitySpam) {
-    $accumulatedScoreBump += 35;
+    $orderRiskScore += 35;
+    $customerScoreBump += 35;
     $localFraudFlags[] = 'Rapid Separated Checkouts Flagged (< 5 min window)';
     $triggerAutoRestriction = true;
 }
@@ -283,7 +325,8 @@ if (!$isGift && $customerLat !== null && $customerLng !== null) {
         if (is_numeric($branchLat) && is_numeric($branchLng)) {
             $distance = bloom_haversine_km((float) $branchLat, (float) $branchLng, $customerLat, $customerLng);
             if ($distance > 50) {
-                $accumulatedScoreBump += 45;
+                $orderRiskScore += 45;
+                $customerScoreBump += 45;
                 $localFraudFlags[] = 'Severe Device-to-Destination Mismatch';
             }
         }
@@ -300,15 +343,16 @@ if (!$isGift && $customerLat !== null && $customerLng !== null) {
 // "first order" + "already flagged for something else" is meaningfully
 // more suspicious than either fact alone, so it adds real extra weight,
 // but a clean first order with zero other flags is untouched.
-if ($isFirstOrder && $accumulatedScoreBump > 0) {
-    $accumulatedScoreBump += 20;
+if ($isFirstOrder && $customerScoreBump > 0) {
+    $orderRiskScore += 20;
+    $customerScoreBump += 20;
     $localFraudFlags[] = 'First order combined with pre-existing risk signal(s)';
 }
 
 // --- 6. Apply the score to the customer profile (server is the only writer) ---
 $checkAutoBan = false;
 $baseScore = (int) ($customer['fraudScore'] ?? 0);
-$ultimateScore = min(100, $baseScore + $accumulatedScoreBump);
+$ultimateScore = min(100, $baseScore + $customerScoreBump);
 
 $customerUpdate = ['fraudScore' => $ultimateScore];
 
@@ -323,7 +367,7 @@ if ($triggerAutoRestriction) {
     $customerUpdate['isRestricted'] = false;
     $customerUpdate['fraudScore'] = min($ultimateScore, 10);
     $ultimateScore = $customerUpdate['fraudScore'];
-} elseif ($accumulatedScoreBump === 0 && $baseScore > 10) {
+} elseif ($customerScoreBump === 0 && $baseScore > 10) {
     // Reward good behavior: a checkout that raised zero new flags at all
     // (nothing from device/IP/phone/address/velocity/geo) is treated as
     // evidence the account isn't currently doing anything wrong — even
@@ -438,7 +482,7 @@ $orderRef = $db->collection('orders')->add([
     'locked' => false,
     'type' => 'WEB',
     'isGift' => $isGift,
-    'fraudScore' => $accumulatedScoreBump,
+    'fraudScore' => $orderRiskScore,
     'fraudFlags' => $localFraudFlags,
     'requestIp' => $requestIp,
     'deviceHash' => $deviceHash,

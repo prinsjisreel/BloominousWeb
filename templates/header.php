@@ -287,7 +287,7 @@ if ($user_role === 'delivery') {
         </a>
         <a href="preorder_reservation.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'preorder_reservation.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-calendar-days"></i>
-            <span>Pre-Order & Reservation</span>
+            <span>Event Organizer & Reservation</span>
         </a>
         <!-- Fraud Analytics Clickable Nav Entry with Active Icon Logic -->
         <a href="fraud_analytics.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'fraud_analytics.php' ? 'active' : ''; ?>">
