@@ -27,6 +27,7 @@ if (!$user_id) {
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     
     <style>
@@ -162,10 +163,26 @@ if (!$user_id) {
     
     if (firebaseConfig.apiKey) {
         firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
         const db = firebase.firestore();
         const userId = "<?php echo $user_id; ?>";
 
-        document.addEventListener('DOMContentLoaded', () => {
+        // Wait for Firebase Auth to actually restore the persisted session
+        // before touching Firestore at all — querying immediately on
+        // DOMContentLoaded (the old code) raced against Auth's own
+        // asynchronous session restore, which could cause this exact
+        // "Missing or insufficient permissions" error intermittently even
+        // for a genuinely logged-in customer.
+        auth.onAuthStateChanged((user) => {
+            if (!user) {
+                // Firebase Auth's own session expired/cleared even though
+                // the PHP $_SESSION cookie is still valid — send them back
+                // through a real login rather than showing a confusing
+                // permissions error on an orders page.
+                window.location.href = '../index.php';
+                return;
+            }
+
             const ordersList = document.getElementById('orders-list');
 
             // Removed .orderBy() to avoid index requirements
@@ -241,7 +258,7 @@ if (!$user_id) {
                 console.error("Error fetching orders:", error);
                 ordersList.innerHTML = `<p class="text-center text-red-500 font-bold">Error loading orders: ${error.message}</p>`;
             });
-        });
+        }); // closes auth.onAuthStateChanged
 
         window.cancelOrder = async function(orderId) {
             if (!confirm('Are you sure you want to cancel this order? This action cannot be undone.')) return;

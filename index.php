@@ -435,42 +435,14 @@
                         return;
                     }
 
-                    // This account is already flagged and we don't recognize
-                    // this device — walk the user through an email code
-                    // before trying set_session.php again.
-                    if (!response.ok && sessionResult.code === 'DEVICE_VERIFICATION_REQUIRED') {
-                        const sendResp = await fetch('send_device_otp.php', {
-                            method: 'POST',
-                            headers: { 'Authorization': 'Bearer ' + idToken },
-                            body: new URLSearchParams({ deviceHash })
-                        });
-                        const sendResult = await sendResp.json();
-                        if (!sendResult.success) {
-                            throw new Error(sendResult.message || 'Could not send verification email.');
-                        }
-
-                        const code = prompt('This device isn\'t recognized on this flagged account. Enter the 6-digit code we just emailed you:');
-                        if (!code) {
-                            throw new Error('Device verification cancelled.');
-                        }
-
-                        const verifyResp = await fetch('verify_device_otp.php', {
-                            method: 'POST',
-                            headers: { 'Authorization': 'Bearer ' + idToken },
-                            body: new URLSearchParams({ deviceHash, code })
-                        });
-                        const verifyResult = await verifyResp.json();
-                        if (!verifyResult.success) {
-                            throw new Error(verifyResult.message || 'Incorrect or expired code.');
-                        }
-
-                        formData.append('deviceOtpVerified', '1');
-                        response = await fetch('includes/set_session.php', {
-                            method: 'POST',
-                            body: formData
-                        });
-                        sessionResult = await response.json();
-                    }
+                    // NOTE: the DEVICE_VERIFICATION_REQUIRED branch that used
+                    // to live here has been removed — set_session.php no
+                    // longer returns that code. A flagged account's
+                    // restriction is now enforced ONLY at checkout (matching
+                    // mobile, and consolidating what used to be two separate,
+                    // inconsistent gates into one). Login itself never blocks
+                    // for a restricted account anymore; it still gets logged
+                    // for admin visibility server-side.
 
                     if (response.ok && sessionResult.success) {
                         registerSuccessfulLogin();

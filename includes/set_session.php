@@ -135,27 +135,40 @@ if ($role === 'customer') {
         exit();
     }
 
-    // --- New-device step-up gate (customers only, and only if the account
-    // is already flagged) ---------------------------------------------------
-    // Deliberately scoped narrow: a normal, un-flagged customer logging in
-    // from a new phone/browser is NOT interrupted. This only bites accounts
-    // that are already isRestricted or have accumulated a meaningful
-    // fraudScore - i.e. exactly the case where "someone else is logging
-    // into this account from an unrecognized device" is worth an extra check.
+    // --- New-device visibility for flagged accounts (customers only) ------
+    // Previously HARD-BLOCKED login here until the customer solved an
+    // email-code prompt via a native browser prompt() — a second,
+    // separate restriction mechanism from the one already built into
+    // checkout.php's SMS-verification gate and submit_order.php's
+    // RESTRICTED response. Per decision: restriction is now enforced
+    // ONLY at checkout, matching mobile (which never blocked login
+    // either) and giving one consistent place customers experience their
+    // restriction, instead of two different gates behaving two different
+    // ways. A flagged account can now always log in and see its own
+    // profile/restriction status; it still can't complete an order
+    // without the phone-verification step baked into checkout.
+    //
+    // The signal itself isn't thrown away — it's recorded for admin
+    // visibility instead of used to block the customer.
     if ($fraudCheckData !== null) {
         $isFlagged = ($fraudCheckData['isRestricted'] ?? false) === true
             || (int) ($fraudCheckData['fraudScore'] ?? 0) >= 50;
         $knownDevices = $fraudCheckData['deviceHashes'] ?? [];
         $isKnownDevice = $deviceHash !== '' && in_array($deviceHash, $knownDevices, true);
 
-        if ($isFlagged && !$isKnownDevice && !$deviceOtpVerified) {
-            http_response_code(403);
-            echo json_encode([
-                'success' => false,
-                'code' => 'DEVICE_VERIFICATION_REQUIRED',
-                'message' => 'This account is flagged for review and this device is not recognized. Verify via the email code we just sent to continue.',
-            ]);
-            exit();
+        if ($isFlagged && !$isKnownDevice) {
+            try {
+                bloom_firestore()->collection('notifications')->add([
+                    'title' => 'Flagged Account — New Device Login',
+                    'message' => "Account [$uid] ($email) is already flagged (isRestricted or fraudScore >= 50) and just logged in from an unrecognized device.",
+                    'type' => 'fraud',
+                    'branchId' => $branchId,
+                    'created_at' => \Google\Cloud\Firestore\FieldValue::serverTimestamp(),
+                    'read' => false,
+                ]);
+            } catch (\Throwable $e) {
+                error_log('set_session.php: could not log new-device notification for ' . $uid . ': ' . $e->getMessage());
+            }
         }
     }
 }
