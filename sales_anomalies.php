@@ -111,8 +111,11 @@ include 'templates/header.php';
                 <label class="config-label">Store Closing Time</label>
                 <input type="time" id="cfg-storeCloseTime" class="config-input" required>
             </div>
-            <div style="display:flex; align-items:flex-end;">
+            <div style="display:flex; align-items:flex-end; gap:12px;">
                 <button type="submit" id="saveConfigBtn" class="btn-primary" style="width:100%; padding:14px; text-transform:uppercase; letter-spacing:1px; font-size:0.75rem;">Save Thresholds</button>
+                <span id="saveStatus" style="font-size:0.7rem; font-weight:800; color:#16a34a; white-space:nowrap; opacity:0; transition:opacity 0.3s;">
+                    <i class="fa-solid fa-circle-check"></i> Saved
+                </span>
             </div>
         </form>
     </div>
@@ -136,7 +139,8 @@ include 'templates/header.php';
 
     function renderAnomalies() {
         const grid = document.getElementById('anomaliesGrid');
-        const filtered = severityFilter === 'all' ? allAnomalies : allAnomalies.filter(a => a.severity === severityFilter);
+        const filtered = severityFilter === 'all' ?
+            allAnomalies : allAnomalies.filter(a => a.severity === severityFilter);
 
         if (filtered.length === 0) {
             grid.innerHTML = '<div class="text-center p-12 text-gray-300 italic">No anomalies in this view.</div>';
@@ -194,20 +198,33 @@ include 'templates/header.php';
         });
 
         <?php if ($isAdminUser): ?>
-        // Load current thresholds into the config form
-        (async () => {
-            const cfg = await SalesAnomalies.getConfig();
+        const AnomalyEngine = window.SalesAnomalies;
+
+        // Pulls the latest saved values from Firestore and fills the form.
+        // Used both on page load AND right after a save, so "what you see
+        // in the boxes" always reflects what's actually stored — never
+        // just what you last typed.
+        async function loadConfigIntoForm() {
+            if (!AnomalyEngine) {
+                console.error('SalesAnomalies engine did not load — check the <script src> path in footer.php.');
+                return;
+            }
+            const cfg = await AnomalyEngine.getConfig();
             Object.keys(cfg).forEach(key => {
                 const el = document.getElementById('cfg-' + key);
                 if (el) el.value = cfg[key];
             });
-        })();
+        }
+
+        loadConfigIntoForm();
 
         document.getElementById('anomalyConfigForm').onsubmit = async (e) => {
             e.preventDefault();
             const btn = document.getElementById('saveConfigBtn');
+            const statusBadge = document.getElementById('saveStatus');
             btn.disabled = true;
             btn.innerText = 'Saving...';
+            statusBadge.style.opacity = 0;
             try {
                 const newConfig = {
                     avgMultiplier: parseFloat(document.getElementById('cfg-avgMultiplier').value),
@@ -222,9 +239,18 @@ include 'templates/header.php';
                     storeOpenTime: document.getElementById('cfg-storeOpenTime').value,
                     storeCloseTime: document.getElementById('cfg-storeCloseTime').value
                 };
+
                 await db.collection('settings').doc('anomaly_config').set(newConfig, { merge: true });
-                SalesAnomalies.invalidateConfigCache();
-                alert('Thresholds updated.');
+
+                if (AnomalyEngine) AnomalyEngine.invalidateConfigCache();
+
+                // The real proof: re-pull from Firestore and refill the
+                // boxes with what's ACTUALLY stored, not what we just typed.
+                await loadConfigIntoForm();
+
+                // Show the badge, then fade it out after 3 seconds.
+                statusBadge.style.opacity = 1;
+                setTimeout(() => { statusBadge.style.opacity = 0; }, 3000);
             } catch (err) {
                 alert('Error saving thresholds: ' + err.message);
             } finally {

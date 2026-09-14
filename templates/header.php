@@ -298,10 +298,23 @@ if ($user_role === 'delivery') {
             <i class="fa-solid fa-triangle-exclamation"></i>
             <span>Sales Anomalies</span>
         </a>
+        <a href="override_codes.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'override_codes.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-key"></i>
+            <span>Override Codes</span>
+        </a>
+
+         <a href="admin_activity_log.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'admin_activity_log.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-clipboard-list"></i>
+            <span>Admin Activity Log</span>
+        </a>
+
+
+
         <a href="product_management.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_management.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-box"></i>
             <span>Inventory</span>
         </a>
+
         <a href="product_catalog.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_catalog.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-list"></i>
             <span>Product Catalog</span>
@@ -320,7 +333,7 @@ if ($user_role === 'delivery') {
         </a>
         <a href="pos.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'pos.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-chart-line"></i>
-            <span>POS Analytics</span>
+            <span>Sales Report</span>
         </a>
         <a href="pos_terminal.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'pos_terminal.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-cash-register"></i>

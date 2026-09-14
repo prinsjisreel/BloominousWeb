@@ -91,7 +91,7 @@ include 'templates/header.php';
     <div class="header-area">
         <div class="flex justify-between items-start flex-wrap gap-8">
             <div>
-                <h1 class="brand-font text-5xl font-black text-gray-800">POS Analytics</h1>
+                <h1 class="brand-font text-5xl font-black text-gray-800">Sales Report</h1>
                 <p class="text-gray-400 text-sm font-medium mt-1">Real-time sales, revenue, and product analytics.</p>
             </div>
             <div class="flex gap-4 items-center flex-wrap">
