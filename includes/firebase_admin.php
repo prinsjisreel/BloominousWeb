@@ -288,6 +288,19 @@ function bloom_json_response(array $payload, int $statusCode = 200): void
 {
     http_response_code($statusCode);
     header('Content-Type: application/json');
+    // Explicit no-cache directive — Hostinger's forced CDN on this
+    // temporary subdomain was found (via canary-string testing on
+    // send_verification_email.php) to be caching responses from
+    // dynamic POST endpoints regardless of the live file's actual
+    // content. This header tells the CDN, and any other proxy or cache
+    // sitting between the visitor and this server, to never store this
+    // response — it must be treated as fresh, one-time-use data every
+    // single call. Since nearly every backend endpoint in this project
+    // (check_email_risk.php, check_email_risk_mobile.php,
+    // verify_override_code.php, and more) calls THIS function to send
+    // its result, adding it here protects the whole backend at once.
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
     echo json_encode($payload);
     exit();
 }

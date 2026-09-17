@@ -389,9 +389,6 @@ include 'templates/header.php';
 
         try {
             // --- Sales Anomalies Detection runs BEFORE the sale is written ---
-            // Each check independently decides if it's flagged, and at what
-            // severity. We run them in parallel since they're independent
-            // reads (no shared state), then take the worst severity found.
             const checks = await Promise.all([
                 SalesAnomalies.checkValueSpike(window.currentBranch, total),
                 SalesAnomalies.checkOffHours(),
@@ -407,7 +404,6 @@ include 'templates/header.php';
                 btn.innerText = 'Awaiting review...';
                 const gateResult = await showAnomalyGate(severity, flaggedChecks);
                 if (!gateResult.proceed) {
-                    // Cashier backed out — nothing was written, sale never happened.
                     btn.disabled = false;
                     btn.innerText = 'Process Transaction';
                     return;
@@ -415,11 +411,7 @@ include 'templates/header.php';
                 justificationNote = gateResult.justificationNote;
                 overriddenBy = gateResult.overriddenBy;
             }
-            // severity === 'low' (or null) falls through here with no gate —
-            // Low risk items are logged silently below, matching the spec.
 
-            // Log every triggered flag, regardless of tier, so the dashboard
-            // has a complete picture even for the silent Low-risk ones.
             for (const c of flaggedChecks) {
                 await SalesAnomalies.logAnomaly({
                     type: c.type,
@@ -438,28 +430,26 @@ include 'templates/header.php';
             const typedRecipient = document.getElementById('posRecipientName').value.trim() || typedCustomer;
             const selectedPaymentMethod = document.getElementById('posPaymentMethod').value;
 
-            // Sequential invoice number (INV-2026-0001, ...) — transaction-safe, never collides
             const invoiceId = await window.generateInvoiceId();
 
-            // Create Order in Firestore
             const orderRef = await db.collection('orders').add({
                 order_id: orderId,
                 invoiceId: invoiceId,
                 customer_id: typedCustomer,
                 customer_name: typedCustomer,
-                customerName: typedCustomer, // support both formats
+                customerName: typedCustomer,
                 recipientName: typedRecipient,
                 subtotal: subtotal,
                 discountPercent: discountPercent,
                 discountAmount: discountAmount,
                 total_amount: total,
                 status: 'completed',
-                paymentStatus: 'Paid', // walk-in sales settle immediately at the register
-                payment_method: selectedPaymentMethod, // FIX: was never recorded for POS sales before
-                locked: true, // completed invoice — from now on only the Void module may touch it
+                paymentStatus: 'Paid',
+                payment_method: selectedPaymentMethod,
+                locked: true,
                 type: 'POS',
                 items: cart,
-                branchId: window.currentBranch, // SAVE BRANCH ID
+                branchId: window.currentBranch,
                 cashierEmail: window.currentUserEmail || null,
                 cashierName: window.currentUserName || null,
                 anomalySeverity: severity || null,
@@ -467,7 +457,6 @@ include 'templates/header.php';
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
-            // Update Stocks in the branch-specific inventory
             for (const item of cart) {
                 const productRef = getBranchPath('inventory').doc(item.id);
                 await db.runTransaction(async (transaction) => {
@@ -476,6 +465,29 @@ include 'templates/header.php';
                     const newStock = (doc.data().stock || 0) - item.qty;
                     transaction.update(productRef, { stock: newStock });
                 });
+            }
+
+            // NEW — logs EVERY completed sale to admin_actions, not just
+            // anomalous ones. Separate from anomaly logging above: this
+            // is a plain accountability record ("cashier X sold ₱Y at
+            // branch Z, invoice #W"), useful for after-the-fact pattern
+            // review even when nothing individually looked wrong at the
+            // time. Best-effort — a logging failure must never roll back
+            // or block a completed sale that's already been written and
+            // whose stock has already been deducted.
+            try {
+                await db.collection('admin_actions').add({
+                    actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
+                    actorEmail: window.currentUserEmail || null,
+                    actorRole: window.currentUserRole || null,
+                    action: 'pos_sale_completed',
+                    targetUid: orderRef.id,
+                    targetEmail: null,
+                    details: `Sold ${cart.length} item(s) for ₱${total.toLocaleString(undefined, {minimumFractionDigits: 2})} at branch ${window.currentBranch} (Invoice ${invoiceId}, ${selectedPaymentMethod}).`,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (auditError) {
+                console.warn('Sale audit log write failed (sale still completed):', auditError);
             }
 
             // Push notification

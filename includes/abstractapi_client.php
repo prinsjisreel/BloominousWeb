@@ -38,7 +38,16 @@ function bloom_abstractapi_check_email(string $email): array
         throw new \RuntimeException('ABSTRACTAPI_EMAIL_KEY not configured.');
     }
 
-    $url = 'https://phoneintelligence.abstractapi.com/v1/?api_key=8dcf751c09a140dda1e7b7df5e69c904&phone=+14152007986' . http_build_query([
+    // FIXED: this was previously pointed at
+    // phoneintelligence.abstractapi.com (the wrong product entirely),
+    // with a hardcoded leaked key/phone number glued in front of a
+    // malformed query string (http_build_query concatenated with no ?
+    // or & separator). Every call was hitting a broken URL, throwing,
+    // and getting silently converted into "not blocked" by
+    // check_email_risk.php's fail-open catch — which is why
+    // AbstractAPI's real email-reputation usage never increased and
+    // registration always proceeded regardless of actual risk.
+    $url = 'https://emailreputation.abstractapi.com/v1/?' . http_build_query([
         'api_key' => $apiKey,
         'email' => $email,
     ]);

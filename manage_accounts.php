@@ -97,7 +97,7 @@ include 'templates/header.php';
                         </div>
                         <div class="form-group">
                             <label>Access Key</label>
-                            <input type="password" id="accPass" required placeholder="••••••••">
+                            <input type="password" id="accPass" required placeholder="••••••••" minlength="6">
                         </div>
                     </div>
                     <div class="form-group mt-2">
@@ -122,7 +122,7 @@ include 'templates/header.php';
                     <table>
                         <thead>
                             <tr>
-                                Dedication<th>Employee</th>
+                                <th>Employee</th>
                                 <th>Assignment</th>
                                 <th>Branch</th>
                                 <th style="text-align: right;">Removal</th>
@@ -203,11 +203,56 @@ include 'templates/header.php';
             accountListData.innerHTML = html;
         });
 
+        /**
+         * Creates a REAL Firebase Auth account for the new employee, then
+         * writes their /users/{uid} profile document while authenticated
+         * AS THAT NEW EMPLOYEE (not the admin) — required because
+         * firestore.rules only allows isOwner(userId) on create for
+         * /users, with no "admin creates on someone else's behalf" path.
+         * This mirrors ManageEmployeesPage's secondary-app technique in
+         * the Flutter app exactly, so both platforms follow the same
+         * real account-creation flow.
+         *
+         * The OLD version of this function never called Firebase Auth at
+         * all — it only wrote a plaintext 'password' field to Firestore
+         * via db.collection('users').add({...}), meaning: (1) that
+         * password was stored insecurely, and (2) no employee created
+         * this way ever had an actual way to log in, since nothing in
+         * this app's login flow checks a Firestore password field.
+         */
+        async function createEmployeeAccount(email, password, profileData) {
+            const secondaryApp = firebase.initializeApp(firebase.app().options, 'Secondary_' + Date.now());
+            try {
+                const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
+                const uid = cred.user.uid;
+
+                await secondaryApp.firestore().collection('users').doc(uid).set({
+                    ...profileData,
+                    uid: uid,
+                    created_at: firebase.firestore.FieldValue.serverTimestamp()
+                    // No 'password' field — firestore.rules blocks it
+                    // outright now, and Firebase Auth (just used above)
+                    // is this project's only real password store.
+                });
+
+                return uid;
+            } finally {
+                // Always clean up the secondary app/session, even if the
+                // Firestore write above failed — leaving it dangling
+                // would leak memory and could interfere with a second
+                // submission attempt in the same page session.
+                await secondaryApp.auth().signOut();
+                await secondaryApp.delete();
+            }
+        }
+
         // --- SECURED REGISTRATION INTERCEPTOR SUBMIT FLOW ---
         document.getElementById('addAccountForm').onsubmit = async (e) => {
             e.preventDefault();
             const btn = document.getElementById('addAccountBtn');
             const inputEmail = document.getElementById('accUser').value.trim().toLowerCase();
+            const inputPassword = document.getElementById('accPass').value;
+            const selectedRole = document.getElementById('accRole').value;
             
             btn.disabled = true;
             btn.innerText = 'Analyzing credential registers...';
@@ -225,8 +270,8 @@ include 'templates/header.php';
                     throw new Error("Registry Collision: An internal employee profile is already mapped to this email domain target.");
                 }
 
-                // 3. If email is completely clean across all directories, commit enrollment safely
-                await db.collection('users').add({
+                // 3. Create the real Auth account + Firestore profile together
+                const newUid = await createEmployeeAccount(inputEmail, inputPassword, {
                     firstName: document.getElementById('accFirstName').value.trim(),
                     middleName: document.getElementById('accMiddleName').value.trim(),
                     lastName: document.getElementById('accLastName').value.trim(),
@@ -234,11 +279,29 @@ include 'templates/header.php';
                     sex: document.getElementById('accSex').value,
                     username: inputEmail,
                     email: inputEmail,
-                    role: document.getElementById('accRole').value,
-                    branchId: document.getElementById('accBranch').value,
-                    password: document.getElementById('accPass').value, // Explicit structural layout sync
-                    created_at: firebase.firestore.FieldValue.serverTimestamp()
+                    role: selectedRole,
+                    branchId: document.getElementById('accBranch').value
                 });
+
+                // 4. Best-effort audit log entry, matching the same
+                // action name ManageEmployeesPage logs on mobile —
+                // written via the ADMIN's own (primary) session, not the
+                // secondary one, since admin_actions requires
+                // actorUid == the currently signed-in caller.
+                try {
+                    await db.collection('admin_actions').add({
+                        actorUid: firebase.auth().currentUser.uid,
+                        actorEmail: window.currentUserEmail || '',
+                        actorRole: currentRole,
+                        action: 'create_employee_account',
+                        targetUid: newUid,
+                        targetEmail: inputEmail,
+                        details: `Created new ${selectedRole} account, assigned to branch ${document.getElementById('accBranch').value}.`,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch (auditError) {
+                    console.warn('Audit log write failed (account still created):', auditError);
+                }
 
                 showSuccess('Corporate employee account deployed successfully!');
                 document.getElementById('addAccountForm').reset();

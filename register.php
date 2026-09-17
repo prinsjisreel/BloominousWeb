@@ -155,7 +155,8 @@ if (session_status() === PHP_SESSION_NONE) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="assets/script/device_fingerprint.js"></script>
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <!-- Google reCAPTCHA v2 -->
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
 </head>
 <body>
     <div class="register-card">
@@ -206,13 +207,13 @@ if (session_status() === PHP_SESSION_NONE) {
                 </div>
             </div>
 
-            <div class="cf-turnstile" data-sitekey="<?php
+            <div class="g-recaptcha" data-sitekey="<?php
                 require_once __DIR__ . '/config.local.php';
-                echo htmlspecialchars(getenv('TURNSTILE_SITE_KEY') ?: '', ENT_QUOTES);
+                echo htmlspecialchars(getenv('RECAPTCHA_SITE_KEY') ?: '', ENT_QUOTES);
             ?>"
-                 data-callback="onTurnstileSuccess"
-                 data-error-callback="onTurnstileError"
-                 data-expired-callback="onTurnstileExpired"
+                 data-callback="onRecaptchaSuccess"
+                 data-error-callback="onRecaptchaError"
+                 data-expired-callback="onRecaptchaExpired"
                  style="margin-bottom: 15px;"></div>
 
             <button type="submit" id="register-btn">
@@ -230,23 +231,23 @@ if (session_status() === PHP_SESSION_NONE) {
             echo "const firebaseConfig = " . $config . ";";
         ?>
 
-        let turnstileToken = '';
+        let recaptchaToken = '';
         const errorBox = document.getElementById('error-box');
 
-        window.onTurnstileSuccess = function (token) {
-            turnstileToken = token;
+        window.onRecaptchaSuccess = function (token) {
+            recaptchaToken = token;
             errorBox.style.display = 'none';
         };
 
-        window.onTurnstileError = function (errorCode) {
-            turnstileToken = '';
-            console.error('Turnstile widget error:', errorCode);
+        window.onRecaptchaError = function () {
+            recaptchaToken = '';
+            console.error('reCAPTCHA widget error.');
             errorBox.innerText = 'Verification failed to load. Please refresh the page and try again.';
             errorBox.style.display = 'block';
         };
 
-        window.onTurnstileExpired = function () {
-            turnstileToken = '';
+        window.onRecaptchaExpired = function () {
+            recaptchaToken = '';
             errorBox.innerText = 'Verification expired. Please complete it again.';
             errorBox.style.display = 'block';
         };
@@ -273,7 +274,7 @@ if (session_status() === PHP_SESSION_NONE) {
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Synchronizing...';
                 errorBox.style.display = 'none';
 
-                if (!turnstileToken) {
+                if (!recaptchaToken) {
                     errorBox.innerText = 'Please complete the verification challenge.';
                     errorBox.style.display = 'block';
                     btn.disabled = false;
@@ -282,42 +283,27 @@ if (session_status() === PHP_SESSION_NONE) {
                 }
 
                 try {
-                    // Security Enforcement Check: Block blacklisted emails from creating accounts
                     const blocklistSnapshot = await db.collection('blocked_emails').doc(email).get();
                     if (blocklistSnapshot.exists) {
                         throw new Error("Security Restriction: This email address is permanently blacklisted due to automated fraud threshold failures.");
                     }
 
-                    // Security Enforcement Check: Block devices tied to a prior
-                    // auto-escalated fraud case from opening a fresh account.
                     const deviceHash = await window.bloomGetDeviceId();
                     const deviceBanSnapshot = await db.collection('banned_devices').doc(deviceHash).get();
                     if (deviceBanSnapshot.exists) {
                         throw new Error("Security Restriction: This device is not eligible to create a new account. Contact support if you believe this is an error.");
                     }
 
-                    // Security Enforcement Check: IPQualityScore email risk
-                    // (disposable/temp-mail domains, undeliverable addresses,
-                    // known abuse), now ALSO covering rate limiting + Turnstile
-                    // + domain allow-list server-side (see check_email_risk.php).
-                    // The API key never touches the browser. Fails open if
-                    // IPQS is unreachable.
                     let emailRiskFlag = false;
                     let emailRiskScoreBump = 0;
                     try {
                         const riskResp = await fetch('check_email_risk.php', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email, turnstileToken })
+                            body: JSON.stringify({ email, recaptchaToken })
                         });
                         const riskResult = await riskResp.json();
 
-                        // A non-2xx response (400 malformed email/Turnstile
-                        // fail, 405 wrong method, 429 rate-limited) never has
-                        // a `block` key — it has `success:false` + either
-                        // `message` (405/400 invalid-email path) or `reason`
-                        // (429/Turnstile path). Check both field names before
-                        // falling back to a generic message.
                         if (!riskResp.ok) {
                             const requestError = new Error(riskResult.message || riskResult.reason || 'Could not validate this email. Please check it and try again.');
                             requestError.isRiskBlock = true;
@@ -335,9 +321,6 @@ if (session_status() === PHP_SESSION_NONE) {
                         if (riskError.isRiskBlock) {
                             throw riskError;
                         }
-                        // Only genuine network/parse errors from our own
-                        // endpoint reach here — fail open, don't block
-                        // signup over that.
                     }
 
                     let role = 'customer';
@@ -357,15 +340,9 @@ if (session_status() === PHP_SESSION_NONE) {
                         created_at: firebase.firestore.FieldValue.serverTimestamp()
                     };
 
-                    // Proceed with standard sign-up if clear
                     const userCredential = await auth.createUserWithEmailAndPassword(email, password);
                     const user = userCredential.user;
 
-                    // password field intentionally NOT written here —
-                    // firestore.rules now blocks any client write to
-                    // `customers` that includes a `password` key. Firebase
-                    // Auth is the real password store; this document never
-                    // needs its own plaintext copy.
                     await db.collection('customers').doc(user.uid).set({
                         ...userData,
                         name: fullName,
@@ -373,19 +350,34 @@ if (session_status() === PHP_SESSION_NONE) {
                         requireEmailVerification: true
                     });
 
-                    // Send our own branded verification email instead of
-                    // Firebase's default firebaseapp.com flow. Best-effort:
-                    // if this fails, still let the account exist rather than
-                    // losing the Auth user just created; the person can
-                    // request another one from the login page's resend link.
+                    // Tries the branded custom email FIRST, falls back
+                    // to Firebase's native sendEmailVerification() if
+                    // that fails for any reason — same defensive
+                    // reasoning as the mobile app's version, given the
+                    // Hostinger CDN caching issue on this temporary
+                    // subdomain is not yet confirmed fully resolved.
+                    let primarySucceeded = false;
                     try {
                         const freshIdTokenForVerify = await user.getIdToken();
-                        await fetch('send_verification_email.php', {
+                        const resp = await fetch('send_verification_email.php', {
                             method: 'POST',
                             headers: { 'Authorization': 'Bearer ' + freshIdTokenForVerify }
                         });
+                        const result = await resp.json();
+                        primarySucceeded = resp.ok && result.success === true;
+                        if (!primarySucceeded) {
+                            console.warn('Custom verification email failed, falling back to Firebase native:', result.message);
+                        }
                     } catch (verifyEmailError) {
-                        console.warn('Could not send verification email:', verifyEmailError);
+                        console.warn('Custom verification email threw an error, falling back to Firebase native:', verifyEmailError);
+                    }
+
+                    if (!primarySucceeded) {
+                        try {
+                            await user.sendEmailVerification();
+                        } catch (fallbackError) {
+                            console.warn('Firebase native sendEmailVerification also failed:', fallbackError);
+                        }
                     }
 
                     if (emailRiskFlag && emailRiskScoreBump > 0) {

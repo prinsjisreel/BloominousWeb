@@ -125,16 +125,12 @@
             const loginForm = document.getElementById('login-form');
             const errorBox = document.getElementById('error-box');
 
-            // Registration just redirected here after creating the account
-            // and sending the confirmation email - tell the person to go
-            // check their inbox before they try logging in.
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.get('registered') === 'verify_pending') {
                 errorBox.innerText = 'Account created! Check your email (and spam folder) for a confirmation link before logging in.';
                 errorBox.style.display = 'block';
             }
 
-            // --- Escalating lockout (client-side, per browser) ---
             const LOCKOUT_KEY = 'bloom_login_lockout';
             let lockoutCountdownInterval = null;
 
@@ -155,7 +151,7 @@
             }
 
             function lockDurationForFails(fails) {
-                const tier = Math.ceil(fails / 3); // 1st tier of 3 fails = tier 1, etc.
+                const tier = Math.ceil(fails / 3);
                 if (tier <= 1) return 30;
                 if (tier === 2) return 60;
                 return 120;
@@ -211,7 +207,6 @@
                 clearLockoutState();
             }
 
-            // Re-check lock state on page load (refresh / navigate back doesn't reset it)
             (function checkLockoutOnLoad() {
                 const state = getLockoutState();
                 if (isCurrentlyLocked(state)) {
@@ -235,10 +230,6 @@
                 btn.innerText = 'Logging in...';
                 errorBox.style.display = 'none';
 
-                // ← NEW: real, server-side rate limit — the client-side
-                // lockout above is a UX nicety only (localStorage-based,
-                // trivially bypassed). This is the actual security
-                // boundary, checked BEFORE Firebase Auth ever runs.
                 try {
                     const rateLimitResp = await fetch('check_login_risk.php', {
                         method: 'POST',
@@ -254,8 +245,6 @@
                         }
                     }
                 } catch (rateLimitError) {
-                    // Fail open — never block a real login over this
-                    // endpoint being unreachable.
                     console.warn('Login rate-limit check failed, proceeding anyway:', rateLimitError);
                 }
 
@@ -264,69 +253,18 @@
                 let matchedCollection = '';
 
                 try {
-                    // 1. Primary Attempt: Attempt core authentication natively via Firebase Auth vault[cite: 3]
                     try {
                         const userCredential = await auth.signInWithEmailAndPassword(email, password);
                         targetUser = userCredential.user;
                     } catch (authError) {
-                        // 2. FALLBACK INTERCEPTOR LOGIC: modern Firebase Auth merges
-                        // wrong-password and user-not-found into a single
-                        // 'auth/invalid-credential' code (email enumeration
-                        // protection), so we check for that instead of the
-                        // legacy codes, which are no longer thrown.
-                        if (authError.code === 'auth/invalid-credential' || authError.code === 'auth/wrong-password' || authError.code === 'auth/user-not-found') {
-
-                            // NOTE: intentionally NOT querying 'users' here.
-                            // firestore.rules only allows `list` on /users to
-                            // admins, and this code runs while unauthenticated
-                            // (login just failed) - that query can never
-                            // succeed and previously threw its own
-                            // "Missing or insufficient permissions" error on
-                            // top of the real one. /customers allows public
-                            // read, so only that collection is checked.
-                            const custQuery = await db.collection('customers').where('email', '==', email.toLowerCase()).get();
-                            const custFallbackQuery = await db.collection('customers').where('custEmail', '==', email.toLowerCase()).get();
-
-                            let matchedDoc = null;
-
-                            if (!custQuery.empty) {
-                                matchedDoc = custQuery.docs[0];
-                                matchedCollection = 'customers';
-                            } else if (!custFallbackQuery.empty) {
-                                matchedDoc = custFallbackQuery.docs[0];
-                                matchedCollection = 'customers';
-                            }
-
-                            // If matched document text matches exactly what was submitted, force sync re-authentication[cite: 3, 5]
-                            if (matchedDoc && matchedDoc.data().password === password) {
-                                userDocData = matchedDoc.data();
-                                
-                                // Sign in using the old password placeholder dynamically to acquire session tokens,
-                                // then immediately push the update parameters to override the vault password string safely[cite: 3, 5]
-                                const fallbackAuthCredential = await auth.signInWithEmailAndPassword(email, matchedDoc.data().password);
-                                targetUser = fallbackAuthCredential.user;
-                                await targetUser.updatePassword(password); 
-                            } else {
-                                throw authError; // Plaintext data mismatch as well, reject completely[cite: 3]
-                            }
-                        } else {
-                            throw authError; // Network error or something else, bubble up exception[cite: 3]
-                        }
+                        throw authError;
                     }
 
-                    // 3. Resolve role configuration and set dynamic session vectors[cite: 3]
                     let userDoc = await db.collection('users').doc(targetUser.uid).get();
                     let existsInUsers = userDoc.exists;
                     let userData = userDocData || (existsInUsers ? userDoc.data() : null);
 
                     if (!existsInUsers && matchedCollection !== 'users') {
-                        // Ordinary customers were never written into /users
-                        // (only /customers), so this lookup denying with
-                        // "permission-denied" here is the EXPECTED outcome,
-                        // not a real error - firestore.rules only allows
-                        // `list` on /users to admins. Treat that specific
-                        // failure as "not an admin account" and keep going
-                        // as a customer, instead of crashing the whole login.
                         try {
                             const emailQuery = await db.collection('users').where('email', '==', targetUser.email.toLowerCase()).limit(1).get();
                             if (!emailQuery.empty) {
@@ -339,7 +277,6 @@
                             if (usersLookupError.code !== 'permission-denied') {
                                 throw usersLookupError;
                             }
-                            // permission-denied => not an admin/staff account, proceed as customer
                         }
                     }
 
@@ -380,9 +317,6 @@
                         }
                     }
 
-                    // Only send a proof of identity (the ID token). The server
-                    // verifies it and looks up uid/role/username itself —
-                    // it no longer trusts anything the client claims here.
                     const idToken = await targetUser.getIdToken();
                     const deviceHash = await window.bloomGetDeviceId();
                     const formData = new FormData();
@@ -395,13 +329,6 @@
                     });
                     let sessionResult = await response.json();
 
-                    // Correct credentials, but this account was created after
-                    // the email-verification feature shipped and hasn't
-                    // clicked its confirmation link yet. This is NOT a wrong
-                    // password/lockout situation, so we handle it here and
-                    // return early instead of falling through to the
-                    // generic catch block (which would count it as a failed
-                    // login attempt and show a misleading error).
                     if (!response.ok && sessionResult.code === 'EMAIL_NOT_VERIFIED') {
                         errorBox.innerHTML = (sessionResult.message || 'Please verify your email before logging in.') +
                             ' <button type="button" id="resend-verify-btn" style="text-decoration:underline;background:none;border:none;color:inherit;cursor:pointer;padding:0;font:inherit;">Resend verification email</button>';
@@ -412,6 +339,12 @@
                             resendBtn.onclick = async () => {
                                 resendBtn.disabled = true;
                                 resendBtn.innerText = 'Sending...';
+
+                                // Tries the branded custom email FIRST,
+                                // falls back to Firebase's native
+                                // sendEmailVerification() if that fails
+                                // for any reason.
+                                let primarySucceeded = false;
                                 try {
                                     const resendIdToken = await targetUser.getIdToken();
                                     const resendResp = await fetch('send_verification_email.php', {
@@ -419,11 +352,18 @@
                                         headers: { 'Authorization': 'Bearer ' + resendIdToken }
                                     });
                                     const resendResult = await resendResp.json();
-                                    if (!resendResp.ok || !resendResult.success) {
-                                        throw new Error(resendResult.message || 'Could not resend.');
+                                    primarySucceeded = resendResp.ok && resendResult.success === true;
+                                } catch (primaryError) {
+                                    console.warn('Custom resend failed, falling back to Firebase native:', primaryError);
+                                }
+
+                                try {
+                                    if (!primarySucceeded) {
+                                        await targetUser.sendEmailVerification();
                                     }
                                     resendBtn.innerText = 'Sent! Check your inbox.';
-                                } catch (resendError) {
+                                } catch (fallbackError) {
+                                    console.error(fallbackError);
                                     resendBtn.innerText = 'Could not resend - try again shortly.';
                                     resendBtn.disabled = false;
                                 }
@@ -434,15 +374,6 @@
                         btn.innerText = 'Login';
                         return;
                     }
-
-                    // NOTE: the DEVICE_VERIFICATION_REQUIRED branch that used
-                    // to live here has been removed — set_session.php no
-                    // longer returns that code. A flagged account's
-                    // restriction is now enforced ONLY at checkout (matching
-                    // mobile, and consolidating what used to be two separate,
-                    // inconsistent gates into one). Login itself never blocks
-                    // for a restricted account anymore; it still gets logged
-                    // for admin visibility server-side.
 
                     if (response.ok && sessionResult.success) {
                         registerSuccessfulLogin();
@@ -455,24 +386,14 @@
                             window.location.href = 'templates/shop.php';
                         }
                     } else {
-                        // None of set_session.php's error messages ("Missing
-                        // ID token", "Invalid or expired session", "Could not
-                        // reach Firestore to resolve role"...) reveal whether
-                        // the EMAIL/PASSWORD were correct — by the time we're
-                        // here, Firebase Auth already accepted them. Safe to
-                        // show the real message instead of a generic one.
                         const sessionError = new Error(sessionResult.message || 'Failed to establish session.');
-                        sessionError.isSessionError = true; // infra failure, not a bad-credential attempt
+                        sessionError.isSessionError = true;
                         throw sessionError;
                     }
                 } catch (error) {
                     console.error(error);
 
                     if (error.isSessionError) {
-                        // Credentials were fine — the server-side session
-                        // step broke. Show the real reason, and don't burn
-                        // one of the user's lockout attempts over something
-                        // that isn't their fault.
                         errorBox.innerText = error.message;
                         errorBox.style.display = 'block';
                         btn.disabled = false;

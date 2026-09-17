@@ -32,9 +32,7 @@ $is_super_admin = $user_role === 'super-admin';
            class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none">
 
     <?php if ($is_super_admin): ?>
-    <!-- Role filter — only meaningful for super-admin's full-log view.
-         A plain admin's own entries under Option B are already all a
-         single actor role, so this control has nothing to do there. -->
+    <!-- Role filter — only meaningful for super-admin's full-log view. -->
     <div class="flex gap-2 mt-4" id="role-filter-chips">
         <button data-role="All" class="role-chip px-4 py-1.5 rounded-full text-xs font-bold border bg-amber-500 text-white border-amber-500">All</button>
         <button data-role="Admin" class="role-chip px-4 py-1.5 rounded-full text-xs font-bold border bg-gray-50 text-gray-700 border-gray-200">Admin</button>
@@ -74,6 +72,12 @@ document.addEventListener('DOMContentLoaded', () => {
         walkin_cancel_override: 'WALK-IN OVERRIDE USED',
         create_employee_account: 'ACCOUNT CREATED',
         update_employee_role: 'ROLE/BRANCH CHANGED',
+        order_status_change: 'ORDER STATUS CHANGE',
+        pos_sale_completed: 'POS SALE',
+        inventory_item_updated: 'ITEM UPDATED',
+        inventory_item_created: 'ITEM CREATED',
+        inventory_stock_added: 'STOCK ADDED',
+        inventory_item_archived: 'ITEM ARCHIVED',
     };
     const actionColors = {
         manual_restrict: 'text-red-600 bg-red-50 border-red-200',
@@ -82,6 +86,12 @@ document.addEventListener('DOMContentLoaded', () => {
         walkin_cancel_override: 'text-purple-600 bg-purple-50 border-purple-200',
         create_employee_account: 'text-blue-600 bg-blue-50 border-blue-200',
         update_employee_role: 'text-amber-700 bg-amber-50 border-amber-200',
+        order_status_change: 'text-gray-600 bg-gray-50 border-gray-200',
+        pos_sale_completed: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+        inventory_item_updated: 'text-yellow-700 bg-yellow-50 border-yellow-200',
+        inventory_item_created: 'text-cyan-600 bg-cyan-50 border-cyan-200',
+        inventory_stock_added: 'text-green-600 bg-green-50 border-green-200',
+        inventory_item_archived: 'text-red-800 bg-red-50 border-red-200',
     };
 
     let allDocs = [];

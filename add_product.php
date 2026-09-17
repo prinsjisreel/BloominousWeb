@@ -115,7 +115,10 @@ include 'templates/header.php';
 
         try {
             const barcode = document.getElementById('barcode').value.toUpperCase();
-            
+            const name = document.getElementById('name').value;
+            const price = parseFloat(document.getElementById('price').value);
+            const stock = parseInt(document.getElementById('stock').value);
+
             // Check if barcode/SKU already exists in this branch
             const check = await getBranchPath('inventory').where('code', '==', barcode).get();
             if (!check.empty) {
@@ -125,18 +128,36 @@ include 'templates/header.php';
                 return;
             }
 
-            await getBranchPath('inventory').add({
-                name: document.getElementById('name').value,
+            const newDocRef = await getBranchPath('inventory').add({
+                name: name,
                 category: document.getElementById('category').value,
                 code: barcode,
-                price: parseFloat(document.getElementById('price').value),
-                stock: parseInt(document.getElementById('stock').value),
+                price: price,
+                stock: stock,
                 image: document.getElementById('imageUrl').value || 'https://picsum.photos/seed/flower/400/400',
                 branchId: window.currentBranch,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 model: document.getElementById('modelUrl').value || "" 
             });
+
+            // Accountability record — same action name/shape as the
+            // Flutter app's inventory_item_created, so entries created
+            // from either platform show up identically in the audit log.
+            try {
+                await db.collection('admin_actions').add({
+                    actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
+                    actorEmail: window.currentUserEmail || null,
+                    actorRole: window.currentUserRole || null,
+                    action: 'inventory_item_created',
+                    targetUid: newDocRef.id,
+                    targetEmail: null,
+                    details: `Created "${name}" at ₱${price.toFixed(2)}, initial stock ${stock}.`,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (auditError) {
+                console.warn('Audit log write failed (product still created):', auditError);
+            }
             
             alert('Product added to inventory successfully!');
             window.location.href = 'product_management.php';

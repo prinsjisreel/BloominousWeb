@@ -122,7 +122,7 @@ include 'templates/header.php';
                     <td class="action-icons" style="text-align: right;">
                         <a href="edit_product.php?id=${id}" class="edit-icon" title="Edit Master Data"><i class="fas fa-pen-nib"></i></a>
                         <a href="spoilage_tracking.php?productId=${id}" class="spoil-icon" title="Log Spoilage Incident"><i class="fas fa-dumpster"></i></a>
-                        <a href="#" onclick="archiveProduct('${id}')" class="archive-icon" title="Deactivate & Archive Item"><i class="fas fa-box-archive"></i></a>
+                        <a href="#" onclick="archiveProduct('${id}', '${(data.name || 'Unnamed').replace(/'/g, "\\'")}')" class="archive-icon" title="Deactivate & Archive Item"><i class="fas fa-box-archive"></i></a>
                     </td>
                 </tr>
                 `;
@@ -149,7 +149,7 @@ include 'templates/header.php';
         });
     });
 
-    async function archiveProduct(id) {
+    async function archiveProduct(id, name) {
         if (confirm('Are you sure you want to deactivate/archive this product? This will hide it from the active inventory and selling screens, but preserve its historical record for sales reports.')) {
             try {
                 // Soft delete by updating isDeleted and status fields
@@ -167,6 +167,25 @@ include 'templates/header.php';
                     });
                 } catch (err) {
                     console.log("Global doc archive skip or handled: ", err.message);
+                }
+
+                // Accountability record — matches the Flutter app's
+                // inventory_item_archived action name, so an item
+                // archived from either platform shows up identically in
+                // the audit log.
+                try {
+                    await db.collection('admin_actions').add({
+                        actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
+                        actorEmail: window.currentUserEmail || null,
+                        actorRole: window.currentUserRole || null,
+                        action: 'inventory_item_archived',
+                        targetUid: id,
+                        targetEmail: null,
+                        details: `Archived "${name}".`,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch (auditError) {
+                    console.warn('Audit log write failed (product still archived):', auditError);
                 }
             } catch (e) {
                 alert('Error archiving product: ' + e.message);

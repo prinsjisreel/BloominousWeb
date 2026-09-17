@@ -305,22 +305,41 @@ window.SalesAnomalies = (function () {
     }
 
     /**
-     * Confirms a manager's email+PIN against the `users` collection.
-     * This is the exact same check order_details.php already used for its
-     * Void/Refund approval gate — pulled out here so both the POS Critical
-     * gate and the Void frequency Critical gate share one implementation
-     * instead of two copies that could drift apart.
+     * Confirms a manager's email+password by attempting a REAL Firebase
+     * Auth sign-in server-side (verify_manager_pin.php), NOT by reading
+     * any stored password field. The OLD version queried `users`
+     * directly from the browser and compared d.data().password against
+     * the entered PIN — a severe vulnerability: firestore.rules allows
+     * public, UNAUTHENTICATED read on `users`, meaning every admin's
+     * real plaintext password was retrievable by anyone, no login
+     * required. verify_manager_pin.php replaces that entirely: Firebase
+     * Auth itself is the only source of truth, and no password value
+     * ever leaves the server or gets compared in the browser.
      * Returns the normalized manager email on success, or null on failure.
      */
     async function verifyManagerPin(email, pin) {
         if (!email || !pin) return null;
-        const normalizedEmail = email.trim().toLowerCase();
-        const snap = await db.collection('users')
-            .where('email', '==', normalizedEmail)
-            .where('role', 'in', ['admin', 'super-admin'])
-            .get();
-        const match = snap.docs.find(d => d.data().password === pin);
-        return match ? normalizedEmail : null;
+        try {
+            const currentUser = firebase.auth().currentUser;
+            if (!currentUser) return null;
+            const idToken = await currentUser.getIdToken();
+
+            const response = await fetch('verify_manager_pin.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + idToken,
+                },
+                body: JSON.stringify({ email: email.trim(), pin }),
+            });
+            const result = await response.json();
+
+            if (!result.success || !result.valid) return null;
+            return email.trim().toLowerCase();
+        } catch (e) {
+            console.error('SalesAnomalies.verifyManagerPin failed:', e);
+            return null;
+        }
     }
 
     return {

@@ -135,6 +135,13 @@ include 'templates/header.php';
 
 <script>
     const productId = "<?php echo $p_id; ?>";
+    // Captured once the product is fetched, BEFORE any edits — this is
+    // what lets the save handler log "Price: ₱X → ₱Y" instead of just
+    // the new value, same reasoning as manage_employees_page.dart's
+    // role-change logging: you can't state what changed after you've
+    // already overwritten the old value.
+    let originalPrice = null;
+    let originalStock = null;
 
     document.addEventListener('DOMContentLoaded', () => {
         // Fetch current data from branch-specific inventory
@@ -163,6 +170,9 @@ include 'templates/header.php';
             document.getElementById('imageUrl').value = p.image || '';
             document.getElementById('imgPreview').src = p.image || 'https://picsum.photos/seed/flower/400/400';
             document.getElementById('modelUrl').value = p.model || '';
+
+            originalPrice = typeof p.price === 'number' ? p.price : parseFloat(p.price) || 0;
+            originalStock = typeof p.stock === 'number' ? p.stock : parseInt(p.stock) || 0;
         }
 
         document.getElementById('editProductForm').onsubmit = async (e) => {
@@ -173,17 +183,41 @@ include 'templates/header.php';
 
             try {
                 const barcode = document.getElementById('barcode').value.toUpperCase();
+                const name = document.getElementById('name').value;
+                const newPrice = parseFloat(document.getElementById('price').value);
+                const newStock = parseInt(document.getElementById('stock').value);
 
                 await getBranchPath('inventory').doc(productId).update({
-                    name: document.getElementById('name').value,
+                    name: name,
                     code: barcode,
-                    price: parseFloat(document.getElementById('price').value),
-                    stock: parseInt(document.getElementById('stock').value),
+                    price: newPrice,
+                    stock: newStock,
                     category: document.getElementById('category').value,
                     image: document.getElementById('imageUrl').value || 'https://picsum.photos/seed/flower/400/400',
                     model: document.getElementById('modelUrl').value || '',
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
+
+                // Logs price/stock edits specifically — the classic
+                // insider-fraud vector in retail (mark a price down, buy
+                // it yourself, mark it back up). Always states old → new
+                // for both fields, even when unchanged, so the absence
+                // of a log entry never has to be interpreted as
+                // meaningful — every save produces one.
+                try {
+                    await db.collection('admin_actions').add({
+                        actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
+                        actorEmail: window.currentUserEmail || null,
+                        actorRole: window.currentUserRole || null,
+                        action: 'inventory_item_updated',
+                        targetUid: productId,
+                        targetEmail: null,
+                        details: `"${name}" — Price: ₱${(originalPrice ?? 0).toFixed(2)} → ₱${newPrice.toFixed(2)}, Stock: ${originalStock ?? '?'} → ${newStock}.`,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch (auditError) {
+                    console.warn('Audit log write failed (product still updated):', auditError);
+                }
                 
                 alert('Product updated successfully!');
                 window.location.href = 'product_management.php';
