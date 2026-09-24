@@ -5,12 +5,27 @@
  * Replaces the client-side db.collection('orders').add(...) call in
  * templates/checkout.php. All fraud scoring (velocity + geo mismatch) is
  * computed here, against the Admin SDK's view of Firestore, and the
- * resulting fraudScore/isRestricted/fraudFlags are written here too.
+ * resulting fraudScore/isRestricted/fraudFlags/riskTier are written here too.
  *
  * The browser can no longer set its own fraudScore, skip the velocity
  * check, or write straight to `orders`/`customers` — see firestore.rules,
  * which denies client `orders` create entirely and already denied client
  * writes to the fraud fields on `customers`.
+ *
+ * --- RISK TIER MODEL (updated) ---
+ * Every check below (device, IP, phone, address, velocity, geo) is now
+ * PURELY ADDITIVE — it bumps the score and appends a human-readable flag,
+ * nothing more. No single one of them can restrict an account by itself
+ * anymore. Restriction is decided ONCE, in section 6, from two things only:
+ *   (a) hard evidence — a device hash that matches a PRIOR confirmed ban.
+ *       That's proof, not a guess, so it can restrict on its own.
+ *   (b) the CUMULATIVE score crossing the Critical tier (90+), which by
+ *       construction requires several independent soft signals to have
+ *       actually converged — a single ambiguous action (like re-ordering
+ *       twice in five minutes) can never get there alone.
+ * Tiers: Low (0-30) silent log | Medium (31-60) dashboard flag only |
+ * High (61-89) logged + watchlisted, order still completes | Critical
+ * (90-100) restricted, phone verification required to lift.
  */
 
 require_once __DIR__ . '/includes/firebase_admin.php';
@@ -148,30 +163,37 @@ $forwardedFor = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? null;
 $requestIp = $forwardedFor ? trim(explode(',', $forwardedFor)[0]) : ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
 $deviceHash = isset($body['deviceHash']) && preg_match('/^[a-f0-9]{64}$/', $body['deviceHash']) ? $body['deviceHash'] : null;
 
-// --- 3b. Banned device gate: a device tied to a prior auto-ban skips
-// straight to restriction, independent of this account's own score ---
+// --- 3b. Banned device gate: a device tied to a prior auto-ban is HARD
+// EVIDENCE, not a behavioral guess — this exact browser/device already
+// caused a confirmed fraud lockout once before. That's the one signal in
+// this whole file allowed to restrict an account on its own; everything
+// else below only adds to the score (see section 6 for why that matters).
 $orderRiskScore = 10; // this order's OWN stored rating — always starts at 10
 $customerScoreBump = 0; // what ADDS to the customer's cumulative score — starts at 0, only rises when something is actually found
 $localFraudFlags = [];
+$hasHardEvidence = false; // true only for PROOF (banned device), never for a suspicious pattern
 $triggerAutoRestriction = false;
 
 if ($deviceHash !== null) {
     $bannedDeviceSnap = $db->collection('banned_devices')->document($deviceHash)->snapshot();
     if ($bannedDeviceSnap->exists()) {
-        $orderRiskScore += 60;
-        $customerScoreBump += 60;
+        $orderRiskScore += 90;
+        $customerScoreBump += 90;
         $localFraudFlags[] = 'Order placed from a previously banned device';
-        $triggerAutoRestriction = true;
+        $hasHardEvidence = true;
     }
 }
 
 // --- 3c. AbstractAPI IP Intelligence: a signal, not a hard block.
-// VPN/proxy usage alone is common and legitimate (weighted lightly, no
-// auto-restriction); Tor or a flagged-abuse IP is treated as higher
-// confidence risk. Relay/mobile are deliberately NOT penalized - relay
-// covers privacy features like Apple's iCloud Private Relay used by
-// many ordinary iPhone customers, and mobile is just "this is a phone
-// carrier connection," both completely normal for real customers.
+// VPN/proxy usage alone is common and legitimate (weighted lightly);
+// Tor or a flagged-abuse IP is weighted much higher, but — like every
+// other soft signal in this file — it only feeds the cumulative score.
+// It can no longer restrict an account on its own; it takes real
+// convergence with something else to reach the Critical tier now.
+// Relay/mobile are deliberately NOT penalized - relay covers privacy
+// features like Apple's iCloud Private Relay used by many ordinary
+// iPhone customers, and mobile is just "this is a phone carrier
+// connection," both completely normal for real customers.
 // Fails open (skips scoring) if unreachable/unconfigured — never block
 // a checkout over a third-party vendor outage.
 if ($requestIp !== 'unknown') {
@@ -182,7 +204,6 @@ if ($requestIp !== 'unknown') {
             $orderRiskScore += 40;
             $customerScoreBump += 40;
             $localFraudFlags[] = 'High-risk IP reputation (Tor/abuse flagged)';
-            $triggerAutoRestriction = true;
         } elseif ($ipResult['vpn'] || $ipResult['proxy']) {
             $orderRiskScore += 15;
             $customerScoreBump += 15;
@@ -199,13 +220,11 @@ if ($requestIp !== 'unknown') {
 // it entirely, so this section is what actually can't be bypassed —
 // every order passes through here regardless of what the client did.
 //
-// Score-based, not a hard block, matching 3b/3c: this system never
-// rejects a real checkout in the moment, it scores the account and lets
-// isRestricted gate FUTURE orders instead (see section 6 below).
-//
-// Disposable/VOIP numbers get real weight (+35, auto-restriction) since
-// a legitimate flower delivery essentially requires a real, reachable
-// number — there's little honest reason to use a burner one here.
+// Score-based only, same as every other soft signal here: a disposable/
+// VOIP number is genuinely unusual for a flower delivery (someone has to
+// be reachable to receive it), so it carries real weight — but weight
+// alone, never an automatic restriction. It takes convergence with
+// something else to actually lock the account.
 //
 // Cross-account reuse (same phone tied to a DIFFERENT uid already) is a
 // meaningfully stronger signal than IP/device sharing, since phone
@@ -220,7 +239,6 @@ try {
         $orderRiskScore += 35;
         $customerScoreBump += 35;
         $localFraudFlags[] = 'Disposable/VOIP phone number used at checkout';
-        $triggerAutoRestriction = true;
     }
 } catch (\Throwable $e) {
     error_log('bloom_abstractapi_check_phone failed, failing open: ' . $e->getMessage());
@@ -272,37 +290,44 @@ try {
     error_log('Address reuse check failed, failing open: ' . $e->getMessage());
 }
 
-// --- 4. Velocity check: any order from this uid in the last 5 minutes? ---
-
+// --- 4. Velocity check: how many of this uid's past orders fall inside
+// the last 5 minutes? This USED TO hard-restrict on any single repeat —
+// that was the actual bug (see the "why this syntax" notes below). A real
+// customer legitimately checks out twice in 5 minutes all the time:
+// ordering for two different recipients, retrying after a declined
+// payment, fixing a typo by just re-ordering. So velocity now behaves
+// like every other signal in this file: it adds to the score, and gets
+// louder the more it repeats, but it can no longer restrict anyone by
+// itself — see section 6.
 $fiveMinAgo = new DateTimeImmutable('-5 minutes');
 $ordersQuery = $db->collection('orders')->where('user_id', '=', $uid)->documents();
 
-$hasRecentVelocitySpam = false;
-$orderCount = 0; // ← NEW: counted in the same single pass, no extra query
+$recentOrderCount = 0; // how many PAST orders fall inside the 5-minute window
+$orderCount = 0;       // total past orders (any time) — used for isFirstOrder below
 foreach ($ordersQuery as $orderDoc) {
     if (!$orderDoc->exists()) continue;
     $orderCount++;
     $oData = $orderDoc->data();
     $ts = $oData['createdAt'] ?? $oData['timestamp'] ?? null;
-    if ($ts instanceof \Google\Cloud\Core\Timestamp) {
-        $orderTime = $ts->get();
-        if ($orderTime >= $fiveMinAgo) {
-            $hasRecentVelocitySpam = true;
-            break;
-        }
+    if ($ts instanceof \Google\Cloud\Core\Timestamp && $ts->get() >= $fiveMinAgo) {
+        $recentOrderCount++;
     }
 }
-// Safe even with the early `break` above: if the loop breaks, at least
-// one order was already counted before it did, so $orderCount is still
-// correctly >= 1 either way — "was this truly their very first order"
-// stays accurate regardless of where the loop stopped.
 $isFirstOrder = ($orderCount === 0);
 
-if ($hasRecentVelocitySpam) {
-    $orderRiskScore += 35;
-    $customerScoreBump += 35;
-    $localFraudFlags[] = 'Rapid Separated Checkouts Flagged (< 5 min window)';
-    $triggerAutoRestriction = true;
+if ($recentOrderCount === 1) {
+    // This is the customer's 2nd order inside 5 minutes. Common, often
+    // innocent — scored, not punished.
+    $orderRiskScore += 25;
+    $customerScoreBump += 25;
+    $localFraudFlags[] = 'Repeat checkout within a 5-minute window';
+} elseif ($recentOrderCount >= 2) {
+    // 3rd+ order in the same short window starts to look automated rather
+    // than accidental — scored higher, but STILL only feeds the
+    // cumulative total in section 6, never restricts by itself here.
+    $orderRiskScore += 40;
+    $customerScoreBump += 40;
+    $localFraudFlags[] = "Multiple rapid checkouts flagged ({$recentOrderCount} prior orders in under 5 minutes)";
 }
 
 // --- 5. Geo mismatch check: device location vs assigned branch ---
@@ -349,24 +374,59 @@ if ($isFirstOrder && $customerScoreBump > 0) {
     $localFraudFlags[] = 'First order combined with pre-existing risk signal(s)';
 }
 
-// --- 6. Apply the score to the customer profile (server is the only writer) ---
+// --- 6. Apply the score to the customer profile, then classify the
+// CUMULATIVE total into a risk tier. This single block is what actually
+// decides whether anyone gets restricted — nothing above this point is
+// allowed to make that call on its own anymore (except the hard-evidence
+// banned-device match, which is proof rather than a guess).
+//
+// Tiers mirror the same Low/Medium/High/Critical vocabulary as the Sales
+// Anomalies dashboard, so admins only ever learn one severity scale:
+//   Low (0-30)      -> silent log, nothing else happens.
+//   Medium (31-60)  -> still just logged, visible on the fraud dashboard.
+//   High (61-89)    -> logged + watchlisted (riskTier stored), but the
+//                      order still completes with no extra friction.
+//   Critical (90+)  -> restricted for 30 days, phone OTP required to lift.
 $checkAutoBan = false;
 $baseScore = (int) ($customer['fraudScore'] ?? 0);
 $ultimateScore = min(100, $baseScore + $customerScoreBump);
 
-$customerUpdate = ['fraudScore' => $ultimateScore];
+$tierLowMax = 30;
+$tierMediumMax = 60;
+$tierHighMax = 89;
+
+$classifyTier = function (int $score) use ($tierLowMax, $tierMediumMax, $tierHighMax): string {
+    if ($score <= $tierLowMax) return 'low';
+    if ($score <= $tierMediumMax) return 'medium';
+    if ($score <= $tierHighMax) return 'high';
+    return 'critical';
+};
+
+$riskTier = $classifyTier($ultimateScore);
+
+// Critical is reached one of two ways: hard evidence (the banned-device
+// match above) or the cumulative score itself crossing the threshold
+// because several independent soft signals genuinely converged. Either
+// way, once we're here, restrict.
+$triggerAutoRestriction = $hasHardEvidence || $riskTier === 'critical';
+
+$customerUpdate = ['fraudScore' => $ultimateScore, 'riskTier' => $riskTier];
 
 if ($triggerAutoRestriction) {
     $expiry = new DateTimeImmutable('+30 days');
     $customerUpdate['isRestricted'] = true;
     $customerUpdate['restrictedUntil'] = $expiry;
-    $localFraudFlags[] = 'Automated 30-Day Restriction: Rapid checkout loop velocity limit violated.';
+    $localFraudFlags[] = $hasHardEvidence
+        ? 'Automated 30-Day Restriction: confirmed hard-evidence match (previously banned device).'
+        : 'Automated 30-Day Restriction: multiple risk signals converged to a Critical score.';
 } elseif ($otpVerified) {
     // Trust restored via verified phone — mirrors the old client-side reset,
     // now actually persisted since the server is allowed to write it.
     $customerUpdate['isRestricted'] = false;
     $customerUpdate['fraudScore'] = min($ultimateScore, 10);
     $ultimateScore = $customerUpdate['fraudScore'];
+    $riskTier = $classifyTier($ultimateScore);
+    $customerUpdate['riskTier'] = $riskTier;
 } elseif ($customerScoreBump === 0 && $baseScore > 10) {
     // Reward good behavior: a checkout that raised zero new flags at all
     // (nothing from device/IP/phone/address/velocity/geo) is treated as
@@ -383,6 +443,8 @@ if ($triggerAutoRestriction) {
     $decayedScore = max(10, $baseScore - 5);
     $customerUpdate['fraudScore'] = $decayedScore;
     $ultimateScore = $decayedScore;
+    $riskTier = $classifyTier($ultimateScore);
+    $customerUpdate['riskTier'] = $riskTier;
 }
 
 if ($ultimateScore >= 100) {
@@ -402,18 +464,19 @@ $customerRef->update(array_map(
 if ($triggerAutoRestriction) {
     $db->collection('notifications')->add([
         'title' => 'Fraud Alert - Account Restricted',
-        'message' => "Account [$uid] was soft-restricted automatically due to rapid checkout loops.",
+        'message' => $hasHardEvidence
+            ? "Account [$uid] was restricted: order placed from a previously banned device."
+            : "Account [$uid] was restricted: multiple risk signals converged to a Critical score.",
         'type' => 'fraud',
         'branchId' => $branchId,
         'created_at' => FieldValue::serverTimestamp(),
         'read' => false,
     ]);
 
-    // Velocity spam blocks the order outright — same behavior as before.
     bloom_json_response([
         'success' => false,
         'code' => 'RESTRICTED',
-        'message' => 'Multiple checkouts detected in a short window. This account has been automatically restricted for 30 days. Verify your phone number to continue.',
+        'message' => 'This order could not be completed. This account has been automatically restricted for 30 days. Verify your phone number to continue.',
     ], 403);
 }
 
@@ -484,6 +547,7 @@ $orderRef = $db->collection('orders')->add([
     'isGift' => $isGift,
     'fraudScore' => $orderRiskScore,
     'fraudFlags' => $localFraudFlags,
+    'riskTier' => $riskTier, // the account's tier immediately after this order — powers the Fraud Analytics click-through history
     'requestIp' => $requestIp,
     'deviceHash' => $deviceHash,
     'timestamp' => FieldValue::serverTimestamp(),

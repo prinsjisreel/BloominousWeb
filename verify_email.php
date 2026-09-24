@@ -61,7 +61,7 @@
             $config = file_exists($configPath) ? file_get_contents($configPath) : '{}';
             echo "const firebaseConfig = " . $config . ";";
         ?>
-        if (firebaseConfig.projectId && !firebaseConfig.authDomain) {
+        if (firebaseConfig.projectId && !firebaseConfig.authDomain) { 
             firebaseConfig.authDomain = firebaseConfig.projectId + ".firebaseapp.com";
         }
         firebase.initializeApp(firebaseConfig);

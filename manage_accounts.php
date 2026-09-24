@@ -1,24 +1,35 @@
 <?php   
 /**
  * BLOOMINOUS - Account Management (Staff & Delivery)
+ *
+ * Account creation is SUPER-ADMIN ONLY (Option B), matching the
+ * mobile app's manage_employees_page.dart. Creation uses the
+ * invite-token pattern required by firestore.rules:
+ *   1. Secondary app creates the Firebase Auth account.
+ *   2. The super-admin's OWN session writes invites/{newUid}.
+ *   3. The secondary app (signed in AS the new account) writes
+ *      employees/{newUid} and users/{newUid}. The rules' 
+ *      hasValidInvite() check approves these because step 2 exists.
+ *   4. The invite is deleted (best-effort).
  */
 if (session_status() === PHP_SESSION_NONE) { 
     session_start(); 
 }
 
-// Security Check - Admin or Super Admin
+// Security Check - must be logged in as staff
 if (!isset($_SESSION['admin_id'])) {
     header("Location: index.php");
     exit();
 }
 
 $userRole = $_SESSION['role'] ?? 'admin';
+$isSuperAdmin = ($userRole === 'super-admin');
 include 'templates/header.php';  
 ?>
 
 <style>
     .manage-content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
-    .page-header { margin-bottom: 3.5rem; }
+    .page-header { margin-bottom: 3.5rem; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
          
     label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px; }
     input, select { width: 100%; padding: 15px 18px; border: 1px solid #f0f0f0; border-radius: 15px; outline: none; font-size: 0.9rem; background: #fafafa; transition: 0.3s; font-weight: 600; }
@@ -38,20 +49,37 @@ include 'templates/header.php';
     .delete-btn { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: #fff5f8; color: var(--primary); transition: 0.3s; border: none; cursor: pointer; }
     .delete-btn:hover { background: var(--primary); color: white; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(233, 30, 99, 0.15); }
     .form-section-title { font-family: 'Cormorant Garamond', serif; font-size: 1.8rem; font-weight: 900; color: var(--text-main); border-bottom: 3px solid var(--primary); display: inline-block; padding-bottom: 8px; margin-bottom: 30px; }
+    .migrate-btn { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 12px; border: 2px solid var(--secondary); color: var(--secondary); background: none; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; cursor: pointer; transition: 0.3s; }
+    .migrate-btn:hover { background: var(--secondary); color: white; }
+    .migrate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .locked-note { font-size: 0.85rem; line-height: 1.6; color: var(--text-light); font-weight: 500; }
 </style>
 
 <main class="manage-content">
     <div class="page-header">
-        <h1 class="brand-font text-5xl font-black text-gray-800">Manage Accounts</h1>
-        <p class="text-gray-400 font-medium text-sm mt-1">Manage employee accounts, roles, and branch assignments.</p>
+        <div>
+            <h1 class="brand-font text-5xl font-black text-gray-800">Manage Accounts</h1>
+            <p class="text-gray-400 font-medium text-sm mt-1">Manage employee accounts, roles, and branch assignments.</p>
+        </div>
+        <?php if ($isSuperAdmin): ?>
+        <!-- One-time legacy-data migration trigger, mirroring the
+             mobile app's "Migrate Legacy Data" button exactly. Super-
+             admin only, since the /employees create rule only permits
+             this cross-account write for super-admin sessions. -->
+        <button id="migrateBtn" class="migrate-btn" onclick="runEmployeeMigration()">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>Migrate Legacy Data</span>
+        </button>
+        <?php endif; ?>
     </div>
 
     <div id="success-alert" class="alert" style="background: rgba(46, 204, 113, 0.1); color: #27ae60;"></div>
     <div id="error-alert" class="alert" style="background: #fff5f8; color: var(--primary);"></div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- ADD ACCOUNT FORM -->
+        <!-- ADD ACCOUNT FORM (super-admin only, Option B) -->
         <div class="lg:col-span-1">
+            <?php if ($isSuperAdmin): ?>
             <div class="card bg-white">
                 <h4 class="form-section-title"><i class="fa-solid fa-user-plus mr-2" style="color: var(--primary);"></i> Register New</h4>
                 <form id="addAccountForm" class="mt-4">
@@ -88,9 +116,7 @@ include 'templates/header.php';
                         <div class="form-group">
                             <label>Organization Role</label>
                             <select id="accRole" required>
-                                <?php if ($userRole === 'super-admin'): ?>
                                 <option value="admin">Shop Admin (Owner)</option>
-                                <?php endif; ?>
                                 <option value="employee">Staff / Intern</option>
                                 <option value="delivery">Logistics Fleet</option>
                             </select>
@@ -110,6 +136,13 @@ include 'templates/header.php';
                     <button type="submit" id="addAccountBtn" class="btn-primary w-full justify-center py-4 mt-4 text-sm uppercase tracking-widest">Deploy Account</button>
                 </form>
             </div>
+            <?php else: ?>
+            <!-- Plain admins can view the roster but cannot create accounts. -->
+            <div class="card bg-white">
+                <h4 class="form-section-title"><i class="fa-solid fa-lock mr-2" style="color: var(--primary);"></i> Registration Locked</h4>
+                <p class="locked-note">Only the Super Admin can create staff, admin, or delivery accounts. Please contact the Super Admin if a new account is needed.</p>
+            </div>
+            <?php endif; ?>
         </div>
 
         <!-- ACCOUNTS TABLE -->
@@ -139,13 +172,17 @@ include 'templates/header.php';
 </main>
 
 <script>
-    const currentRole = '<?php echo $userRole; ?>';
+    // json_encode safely turns the PHP string into a valid JS string literal.
+    const currentRole = <?php echo json_encode($userRole); ?>;
+
+    // How long an invite stays valid. Must match the mobile app (10 minutes).
+    const INVITE_TTL_MS = 10 * 60 * 1000;
+
     document.addEventListener('DOMContentLoaded', () => {
         const accountListData = document.getElementById('accountListData');
         const accBranchSelect = document.getElementById('accBranch');
         let branchMap = {};
 
-        // Load Branches for dropdown and mapping
         db.collection('branches').onSnapshot(snap => {
             let options = '<option value="">Select Branch</option>';
             branchMap = {};
@@ -155,15 +192,17 @@ include 'templates/header.php';
                 branchMap[doc.id] = bName;
                 options += `<option value="${doc.id}">${bName}</option>`;
             });
-            accBranchSelect.innerHTML = options;
+            // The branch <select> only exists for super-admins now.
+            if (accBranchSelect) {
+                accBranchSelect.innerHTML = options;
+            }
         });
 
-        // Load Accounts (Staff & Delivery & Admin for Super Admin)
         let rolesToFetch = ['employee', 'delivery'];
         if (currentRole === 'super-admin') {
             rolesToFetch.push('admin');
         }
-        db.collection('users').where('role', 'in', rolesToFetch).onSnapshot(snap => {
+        db.collection('employees').where('role', 'in', rolesToFetch).onSnapshot(snap => {
             if (snap.empty) {
                 accountListData.innerHTML = "<tr><td colspan='4' style='text-align:center; padding: 40px;' class='text-muted'>No accounts found.</td></tr>";
                 return;
@@ -204,124 +243,219 @@ include 'templates/header.php';
         });
 
         /**
-         * Creates a REAL Firebase Auth account for the new employee, then
-         * writes their /users/{uid} profile document while authenticated
-         * AS THAT NEW EMPLOYEE (not the admin) — required because
-         * firestore.rules only allows isOwner(userId) on create for
-         * /users, with no "admin creates on someone else's behalf" path.
-         * This mirrors ManageEmployeesPage's secondary-app technique in
-         * the Flutter app exactly, so both platforms follow the same
-         * real account-creation flow.
-         *
-         * The OLD version of this function never called Firebase Auth at
-         * all — it only wrote a plaintext 'password' field to Firestore
-         * via db.collection('users').add({...}), meaning: (1) that
-         * password was stored insecurely, and (2) no employee created
-         * this way ever had an actual way to log in, since nothing in
-         * this app's login flow checks a Firestore password field.
+         * Creates a staff account using the invite-token pattern.
+         * `db` = the DEFAULT app (the super-admin's own session).
+         * `secondaryApp` = a throwaway app that signs in AS the new account.
          */
         async function createEmployeeAccount(email, password, profileData) {
             const secondaryApp = firebase.initializeApp(firebase.app().options, 'Secondary_' + Date.now());
-            try {
-                const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
-                const uid = cred.user.uid;
+            let newUser = null;             // set once the Auth account exists
+            let inviteRef = null;           // set once the invite is written
+            let employeeDocWritten = false; // for rollback cleanup
+            let step = 'creating the login account (Firebase Auth)';
 
-                await secondaryApp.firestore().collection('users').doc(uid).set({
+            try {
+                // STEP 1: create the Auth account (secondary app signs in as it).
+                const cred = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
+                newUser = cred.user;
+                const uid = newUser.uid;
+
+                // STEP 2: the super-admin's OWN session writes the permission slip.
+                // Field names are the shared contract with mobile's _addEmployee().
+                step = 'writing the invite (your super-admin session)';
+                inviteRef = db.collection('invites').doc(uid);
+                await inviteRef.set({
+                    role: profileData.role,
+                    email: email,
+                    createdBy: firebase.auth().currentUser.uid,
+                    expiresAt: firebase.firestore.Timestamp.fromDate(new Date(Date.now() + INVITE_TTL_MS))
+                });
+
+                // STEP 3a: the new account writes its own full profile.
+                step = 'writing the employee profile (new account session)';
+                await secondaryApp.firestore().collection('employees').doc(uid).set({
                     ...profileData,
                     uid: uid,
                     created_at: firebase.firestore.FieldValue.serverTimestamp()
-                    // No 'password' field — firestore.rules blocks it
-                    // outright now, and Firebase Auth (just used above)
-                    // is this project's only real password store.
+                });
+                employeeDocWritten = true;
+
+                // STEP 3b: the new account writes its slim role pointer.
+                step = 'writing the role pointer in users (new account session)';
+                await secondaryApp.firestore().collection('users').doc(uid).set({
+                    uid: uid,
+                    email: email,
+                    role: profileData.role,
+                    created_at: firebase.firestore.FieldValue.serverTimestamp()
                 });
 
                 return uid;
+            } catch (err) {
+                // ROLLBACK: never leave a half-made account behind.
+                if (employeeDocWritten && newUser) {
+                    try {
+                        await db.collection('employees').doc(newUser.uid).delete();
+                    } catch (cleanupErr) {
+                        console.warn('Rollback: could not delete employees doc:', cleanupErr);
+                    }
+                }
+                if (newUser) {
+                    try {
+                        // The secondary app is still signed in as this user, so it can delete itself.
+                        await newUser.delete();
+                    } catch (cleanupErr) {
+                        console.warn('Rollback: could not delete Auth account:', cleanupErr);
+                    }
+                }
+                const wrapped = new Error(`Failed while ${step}: ${err.message}`);
+                wrapped.code = err.code;
+                throw wrapped;
             } finally {
-                // Always clean up the secondary app/session, even if the
-                // Firestore write above failed — leaving it dangling
-                // would leak memory and could interfere with a second
-                // submission attempt in the same page session.
-                await secondaryApp.auth().signOut();
+                // STEP 4: consume the invite (best-effort) so it can't be reused.
+                if (inviteRef) {
+                    try {
+                        await inviteRef.delete();
+                    } catch (inviteErr) {
+                        console.warn('Invite cleanup failed (it will expire on its own):', inviteErr);
+                    }
+                }
+                try { await secondaryApp.auth().signOut(); } catch (e) { /* already signed out */ }
                 await secondaryApp.delete();
             }
         }
 
-        // --- SECURED REGISTRATION INTERCEPTOR SUBMIT FLOW ---
-        document.getElementById('addAccountForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('addAccountBtn');
-            const inputEmail = document.getElementById('accUser').value.trim().toLowerCase();
-            const inputPassword = document.getElementById('accPass').value;
-            const selectedRole = document.getElementById('accRole').value;
-            
-            btn.disabled = true;
-            btn.innerText = 'Analyzing credential registers...';
-            
-            try {
-                // 1. HARD SECURITY CHECK: Search customers collection first prior to auth allocation
-                const customerLookup = await db.collection('customers').where('email', '==', inputEmail).get();
-                if (!customerLookup.empty) {
-                    throw new Error("Security Registry Rejection: This email address is already registered as a standard customer profile. Escalation to corporate roles via this module is strictly prohibited.");
-                }
+        const addForm = document.getElementById('addAccountForm');
+        // The form only exists for super-admins, so only wire it up if it's there.
+        if (addForm) {
+            addForm.onsubmit = async (e) => {
+                e.preventDefault();
+                const btn = document.getElementById('addAccountBtn');
+                const inputEmail = document.getElementById('accUser').value.trim().toLowerCase();
+                const inputPassword = document.getElementById('accPass').value;
+                const selectedRole = document.getElementById('accRole').value;
+                const selectedBranch = document.getElementById('accBranch').value;
 
-                // 2. Search existing internal management users collection
-                const userLookup = await db.collection('users').where('email', '==', inputEmail).get();
-                if (!userLookup.empty) {
-                    throw new Error("Registry Collision: An internal employee profile is already mapped to this email domain target.");
-                }
+                btn.disabled = true;
+                btn.innerText = 'Analyzing credential registers...';
 
-                // 3. Create the real Auth account + Firestore profile together
-                const newUid = await createEmployeeAccount(inputEmail, inputPassword, {
-                    firstName: document.getElementById('accFirstName').value.trim(),
-                    middleName: document.getElementById('accMiddleName').value.trim(),
-                    lastName: document.getElementById('accLastName').value.trim(),
-                    birthday: document.getElementById('accBirthday').value,
-                    sex: document.getElementById('accSex').value,
-                    username: inputEmail,
-                    email: inputEmail,
-                    role: selectedRole,
-                    branchId: document.getElementById('accBranch').value
-                });
-
-                // 4. Best-effort audit log entry, matching the same
-                // action name ManageEmployeesPage logs on mobile —
-                // written via the ADMIN's own (primary) session, not the
-                // secondary one, since admin_actions requires
-                // actorUid == the currently signed-in caller.
                 try {
-                    await db.collection('admin_actions').add({
-                        actorUid: firebase.auth().currentUser.uid,
-                        actorEmail: window.currentUserEmail || '',
-                        actorRole: currentRole,
-                        action: 'create_employee_account',
-                        targetUid: newUid,
-                        targetEmail: inputEmail,
-                        details: `Created new ${selectedRole} account, assigned to branch ${document.getElementById('accBranch').value}.`,
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                } catch (auditError) {
-                    console.warn('Audit log write failed (account still created):', auditError);
-                }
+                    // Guard 1: PHP says you're logged in, but Firebase JS must agree too.
+                    if (!firebase.auth().currentUser) {
+                        throw new Error('Your Firebase session is not ready yet. Please refresh the page and try again.');
+                    }
+                    // Guard 2: UI mirror of the rules (the rules are the real lock).
+                    if (currentRole !== 'super-admin') {
+                        throw new Error('Only the Super Admin can create accounts.');
+                    }
 
-                showSuccess('Corporate employee account deployed successfully!');
-                document.getElementById('addAccountForm').reset();
-            } catch (err) {
-                showError(err.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerText = 'Deploy Account';
-            }
-        };
+                    const customerLookup = await db.collection('customers').where('email', '==', inputEmail).get();
+                    if (!customerLookup.empty) {
+                        throw new Error("Security Registry Rejection: This email address is already registered as a standard customer profile. Escalation to corporate roles via this module is strictly prohibited.");
+                    }
+
+                    const userLookup = await db.collection('users').where('email', '==', inputEmail).get();
+                    if (!userLookup.empty) {
+                        throw new Error("Registry Collision: An internal employee profile is already mapped to this email domain target.");
+                    }
+
+                    btn.innerText = 'Deploying account...';
+
+                    const newUid = await createEmployeeAccount(inputEmail, inputPassword, {
+                        firstName: document.getElementById('accFirstName').value.trim(),
+                        middleName: document.getElementById('accMiddleName').value.trim(),
+                        lastName: document.getElementById('accLastName').value.trim(),
+                        birthday: document.getElementById('accBirthday').value,
+                        sex: document.getElementById('accSex').value,
+                        username: inputEmail,
+                        email: inputEmail,
+                        role: selectedRole,
+                        branchId: selectedBranch
+                    });
+
+                    try {
+                        await db.collection('admin_actions').add({
+                            actorUid: firebase.auth().currentUser.uid,
+                            actorEmail: window.currentUserEmail || '',
+                            actorRole: currentRole,
+                            action: 'create_employee_account',
+                            targetUid: newUid,
+                            targetEmail: inputEmail,
+                            details: `Created new ${selectedRole} account, assigned to branch ${selectedBranch}.`,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    } catch (auditError) {
+                        console.warn('Audit log write failed (account still created):', auditError);
+                    }
+
+                    showSuccess('Corporate employee account deployed successfully!');
+                    addForm.reset();
+                } catch (err) {
+                    console.error('Account creation error:', err);
+                    showError(err.message);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = 'Deploy Account';
+                }
+            };
+        }
     });
 
     async function deleteAccount(id) {
         if (confirm('Are you sure you want to remove this account?')) {
             try {
-                await db.collection('users').doc(id).delete();
+                await Promise.all([
+                    db.collection('employees').doc(id).delete(),
+                    db.collection('users').doc(id).delete()
+                ]);
                 showSuccess('Account removed successfully!');
             } catch (err) {
                 showError('Error: ' + err.message);
             }
+        }
+    }
+
+    // One-time backfill, mirrors InventoryData's
+    // migrateLegacyEmployeesToEmployeesCollection() in the mobile app
+    // exactly -- same read (non-customer 'users' docs), same skip
+    // condition (an 'employees' doc already exists), same fields
+    // copied across. Safe to run from either platform, or both.
+    async function runEmployeeMigration() {
+        if (!confirm('Run one-time migration to copy legacy employee profiles into the new Employees collection? This is safe to run more than once.')) return;
+        const btn = document.getElementById('migrateBtn');
+        if (btn) { btn.disabled = true; btn.querySelector('span').innerText = 'Migrating...'; }
+        try {
+            const snap = await db.collection('users').where('role', 'in', ['admin', 'super-admin', 'employee', 'delivery']).get();
+            let migrated = 0;
+            let skippedAlready = 0;
+            for (const doc of snap.docs) {
+                const uid = doc.id;
+                const data = doc.data();
+                const existing = await db.collection('employees').doc(uid).get();
+                if (existing.exists) {
+                    skippedAlready++;
+                    continue;
+                }
+                await db.collection('employees').doc(uid).set({
+                    uid: uid,
+                    firstName: data.firstName || null,
+                    middleName: data.middleName || null,
+                    lastName: data.lastName || null,
+                    birthday: data.birthday || null,
+                    sex: data.sex || null,
+                    email: data.email || null,
+                    employeeId: data.employeeId || null,
+                    role: data.role,
+                    branchId: data.branchId || null,
+                    created_at: data.createdAt || firebase.firestore.FieldValue.serverTimestamp(),
+                    migratedFromUsersCollection: true
+                });
+                migrated++;
+            }
+            showSuccess(`Migration complete: ${migrated} account(s) migrated, ${skippedAlready} already up to date.`);
+        } catch (err) {
+            showError('Migration failed: ' + err.message);
+        } finally {
+            if (btn) { btn.disabled = false; btn.querySelector('span').innerText = 'Migrate Legacy Data'; }
         }
     }
 
@@ -339,7 +473,8 @@ include 'templates/header.php';
         if (e) {
             e.innerText = msg;
             e.style.display = 'block';
-            setTimeout(() => e.style.display = 'none', 5000);
+            // Errors stay longer (8s) since they now carry step details worth reading.
+            setTimeout(() => e.style.display = 'none', 8000);
         }
     }
 </script>

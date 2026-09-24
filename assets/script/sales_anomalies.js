@@ -30,7 +30,17 @@ window.SalesAnomalies = (function () {
         discountMediumPercent: 15,     // manual discount % at/above this -> medium
         discountCriticalPercent: 30,   // manual discount % at/above this -> critical
         storeOpenTime: '08:00',        // "HH:MM", 24h format under the hood — the UI shows a normal time picker
-        storeCloseTime: '20:00'
+        storeCloseTime: '20:00',
+        // --- Peak-season awareness (NEW) ---
+        // A florist's biggest, most PREDICTABLE sales days (Valentine's,
+        // Mother's Day, wedding season) are not anomalies — they're the
+        // whole business. Outside of a peakDates window, the multipliers
+        // above apply as normal. Inside one, these relaxed multipliers
+        // apply instead, so the first few big orders of the season don't
+        // trip a manager-PIN gate before the rolling average has caught up.
+        peakDates: [],                 // array of {start:'YYYY-MM-DD', end:'YYYY-MM-DD'}, admin-managed
+        peakAvgMultiplier: 8,          // relaxed "medium" multiplier during a peak window
+        peakCriticalMultiplier: 15     // relaxed "critical" multiplier during a peak window
     };
 
     const SEVERITY_RANK = { low: 1, medium: 2, critical: 3 };
@@ -59,13 +69,41 @@ window.SalesAnomalies = (function () {
         cachedConfig = null;
     }
 
+    /**
+     * True if `date` (defaults to now) falls inside any admin-configured
+     * peak-season window. Pure date-string comparison (YYYY-MM-DD sorts
+     * correctly as a string), so no timezone-math surprises.
+     */
+    function isPeakDate(cfg, date = new Date()) {
+        const todayStr = date.toISOString().slice(0, 10);
+        return (cfg.peakDates || []).some(range =>
+            range && range.start && range.end && todayStr >= range.start && todayStr <= range.end
+        );
+    }
+
     /* ------------------------------------------------------------------ *
      * CHECK 1 — Statistical Threshold Spike
      * "a single walk-in order totaling ₱50,000 when the average is ₱1,500"
+     *
+     * `orderType` ('walkin' | 'bulk_event') lets the cashier tell this
+     * check "this sale is SUPPOSED to be big" — a wedding/event order was
+     * never really comparable to a walk-in bouquet average in the first
+     * place, so bulk/event orders skip the branch-average comparison
+     * entirely instead of being measured against a population they were
+     * never part of.
      * ------------------------------------------------------------------ */
-    async function checkValueSpike(branchId, transactionTotal) {
+    async function checkValueSpike(branchId, transactionTotal, orderType = 'walkin') {
         try {
+            if (orderType === 'bulk_event') {
+                // Tagged by the cashier as a known bulk/event order — not
+                // a mysterious spike, just a different category of sale.
+                return { flagged: false };
+            }
+
             const cfg = await getConfig();
+            const peak = isPeakDate(cfg);
+            const avgMultiplier = peak ? cfg.peakAvgMultiplier : cfg.avgMultiplier;
+            const criticalMultiplier = peak ? cfg.peakCriticalMultiplier : cfg.criticalMultiplier;
 
             // IMPORTANT: this query intentionally uses only ONE equality
             // filter (branchId) plus orderBy on a different field
@@ -89,6 +127,11 @@ window.SalesAnomalies = (function () {
             snap.forEach(d => {
                 const data = d.data();
                 if (data.type !== 'POS') return;
+                // Bulk/event sales are excluded from the baseline itself
+                // too — otherwise one giant wedding order drags the
+                // "normal" average up and makes genuinely small thefts
+                // (under-ringing) harder to catch.
+                if (data.orderType === 'bulk_event') return;
                 const v = data.total_amount;
                 if (typeof v === 'number' && v > 0) totals.push(v);
             });
@@ -111,20 +154,20 @@ window.SalesAnomalies = (function () {
             const avg = totals.reduce((a, b) => a + b, 0) / totals.length;
             const ratio = avg > 0 ? transactionTotal / avg : Infinity;
 
-            if (ratio >= cfg.criticalMultiplier) {
+            if (ratio >= criticalMultiplier) {
                 return {
                     flagged: true,
                     type: 'value_spike',
                     severity: 'critical',
-                    detail: `Transaction ₱${transactionTotal.toFixed(2)} is ${ratio.toFixed(1)}x this branch's recent average ticket (₱${avg.toFixed(2)}).`
+                    detail: `Transaction ₱${transactionTotal.toFixed(2)} is ${ratio.toFixed(1)}x this branch's recent average ticket (₱${avg.toFixed(2)})${peak ? ' — peak-season threshold applied' : ''}.`
                 };
             }
-            if (ratio >= cfg.avgMultiplier) {
+            if (ratio >= avgMultiplier) {
                 return {
                     flagged: true,
                     type: 'value_spike',
                     severity: 'medium',
-                    detail: `Transaction ₱${transactionTotal.toFixed(2)} is ${ratio.toFixed(1)}x this branch's recent average ticket (₱${avg.toFixed(2)}).`
+                    detail: `Transaction ₱${transactionTotal.toFixed(2)} is ${ratio.toFixed(1)}x this branch's recent average ticket (₱${avg.toFixed(2)})${peak ? ' — peak-season threshold applied' : ''}.`
                 };
             }
             return { flagged: false };
@@ -268,9 +311,9 @@ window.SalesAnomalies = (function () {
     /**
      * Given an array of check results (some flagged, some not), returns
      * the single worst severity among the flagged ones, or null if none
-     * were flagged. This is what actually decides which gate the cashier
-     * sees: null -> proceed, 'low' -> silent log, 'medium' -> justification
-     * note required, 'critical' -> manager PIN required.
+     * were flagged. This is the RAW answer — "what's the single worst
+     * thing found." See resolveGateSeverity() below for the version that
+     * also applies the "a lone value spike isn't proof" rule.
      */
     function worstSeverity(results) {
         let worst = null;
@@ -279,6 +322,30 @@ window.SalesAnomalies = (function () {
                 worst = r.severity;
             }
         });
+        return worst;
+    }
+
+    /**
+     * The actual gate decision for a POS sale. Identical to worstSeverity()
+     * EXCEPT for one rule: if the ONLY thing flagged is a value_spike, and
+     * nothing else corroborates it, a "critical" result is downgraded to
+     * "medium." A big transaction by itself is genuinely ambiguous (a
+     * good sale, a wedding order someone forgot to tag) — it should only
+     * earn the manager-PIN-level friction when it shows up ALONGSIDE
+     * something else unusual (off-hours, a stacked discount). This is the
+     * same "no single ambiguous signal reaches the top tier alone" rule
+     * used for the customer-facing fraud score in submit_order.php.
+     */
+    function resolveGateSeverity(results) {
+        const flagged = results.filter(r => r.flagged);
+        const worst = worstSeverity(results);
+        if (worst === 'critical') {
+            const criticalOnes = flagged.filter(r => r.severity === 'critical');
+            const isLoneValueSpike = flagged.length === 1 && criticalOnes.length === 1 && criticalOnes[0].type === 'value_spike';
+            if (isLoneValueSpike) {
+                return 'medium';
+            }
+        }
         return worst;
     }
 
@@ -305,51 +372,34 @@ window.SalesAnomalies = (function () {
     }
 
     /**
-     * Confirms a manager's email+password by attempting a REAL Firebase
-     * Auth sign-in server-side (verify_manager_pin.php), NOT by reading
-     * any stored password field. The OLD version queried `users`
-     * directly from the browser and compared d.data().password against
-     * the entered PIN — a severe vulnerability: firestore.rules allows
-     * public, UNAUTHENTICATED read on `users`, meaning every admin's
-     * real plaintext password was retrievable by anyone, no login
-     * required. verify_manager_pin.php replaces that entirely: Firebase
-     * Auth itself is the only source of truth, and no password value
-     * ever leaves the server or gets compared in the browser.
+     * Confirms a manager's email+PIN against the `users` collection.
+     * This is the exact same check order_details.php already used for its
+     * Void/Refund approval gate — pulled out here so both the POS Critical
+     * gate and the Void frequency Critical gate share one implementation
+     * instead of two copies that could drift apart.
      * Returns the normalized manager email on success, or null on failure.
      */
     async function verifyManagerPin(email, pin) {
         if (!email || !pin) return null;
-        try {
-            const currentUser = firebase.auth().currentUser;
-            if (!currentUser) return null;
-            const idToken = await currentUser.getIdToken();
-
-            const response = await fetch('verify_manager_pin.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + idToken,
-                },
-                body: JSON.stringify({ email: email.trim(), pin }),
-            });
-            const result = await response.json();
-
-            if (!result.success || !result.valid) return null;
-            return email.trim().toLowerCase();
-        } catch (e) {
-            console.error('SalesAnomalies.verifyManagerPin failed:', e);
-            return null;
-        }
+        const normalizedEmail = email.trim().toLowerCase();
+        const snap = await db.collection('users')
+            .where('email', '==', normalizedEmail)
+            .where('role', 'in', ['admin', 'super-admin'])
+            .get();
+        const match = snap.docs.find(d => d.data().password === pin);
+        return match ? normalizedEmail : null;
     }
 
     return {
         getConfig,
         invalidateConfigCache,
+        isPeakDate,
         checkValueSpike,
         checkOffHours,
         checkDiscount,
         checkVoidFrequency,
         worstSeverity,
+        resolveGateSeverity,
         logAnomaly,
         verifyManagerPin,
         DEFAULT_CONFIG

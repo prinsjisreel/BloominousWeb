@@ -1,4 +1,71 @@
-<?php session_start(); // If already logged in, redirect if (isset($_SESSION['admin_id'])) {     header("Location: admin.php");     exit(); } ?>
+<?php
+// These two are computed unconditionally, every request — the forced
+// setcookie() call at the bottom needs them regardless of whether a
+// session was already active or brand new this request.
+$bloomIsHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+$bloomSessionLifetimeSeconds = 60 * 60 * 24 * 30; // 30 days — stay logged in until actual logout
+
+// Only configure cookie PARAMS if no session is active yet — calling
+// session_set_cookie_params() on an already-active session throws a PHP
+// warning.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_set_cookie_params([
+        'lifetime' => $bloomSessionLifetimeSeconds,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $bloomIsHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    ini_set('session.gc_maxlifetime', (string) $bloomSessionLifetimeSeconds);
+}
+
+session_start();
+
+// FIXED: PHP only sends a Set-Cookie header when a session is first
+// CREATED — if the browser already holds an older cookie (from before
+// session_set_cookie_params() was ever configured, or from any point
+// before this fix existed), PHP just keeps reusing that old,
+// expiration-less cookie forever and never re-issues it, no matter what
+// gets configured afterward. Confirmed via a diagnostic script: on a
+// request with an existing session cookie, headers_list() showed no
+// Set-Cookie line at all, even with session_set_cookie_params()
+// returning true and session_get_cookie_params() confirming the
+// 30-day config. This forces a fresh Set-Cookie on EVERY request,
+// unconditionally, with a sliding 30-day expiration — an actively used
+// account effectively never expires; only a truly abandoned one does.
+setcookie(session_name(), session_id(), [
+    'expires' => time() + $bloomSessionLifetimeSeconds,
+    'path' => '/',
+    'domain' => '',
+    'secure' => $bloomIsHttps,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+
+// If already logged in, redirect based on role — matches the exact same
+// role-based routing the login flow's own JS uses right after signing
+// in. FIXED: this previously only checked $_SESSION['admin_id'], which
+// is NEVER set for a customer session (set_session.php sets
+// $_SESSION['user_id'] for customers instead) — so a logged-in customer
+// opening this page directly (a new tab, typing the root URL, a
+// bookmark) always saw the raw login form again, even with a perfectly
+// valid session. This wasn't a device-recognition or timing issue at
+// all; it was a deterministic gap in this one check, identical on both
+// localhost and the deployed site since it's pure PHP logic.
+if (isset($_SESSION['admin_id']) || isset($_SESSION['user_id'])) {
+    $role = $_SESSION['role'] ?? 'customer';
+    if (in_array($role, ['admin', 'super-admin', 'staff', 'employee'], true)) {
+        header("Location: admin.php");
+    } elseif ($role === 'delivery') {
+        header("Location: delivery_status.php");
+    } else {
+        header("Location: templates/shop.php");
+    }
+    exit();
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -284,24 +351,67 @@
                     let username = targetUser.email.split('@')[0];
                     let finalBranchId = 'main_branch';
 
+                    // CHANGED: the super-admin branch now checks for an
+                    // existing 'users' doc by email FIRST, mirroring the
+                    // exact same fix applied to getUserData() on mobile.
+                    // Previously this unconditionally set() a fresh doc
+                    // at whatever targetUser.uid happened to be THIS
+                    // login, with no memory of any doc that might exist
+                    // under a DIFFERENT (stale) uid for this same email
+                    // -- that gap is exactly what caused the duplicate
+                    // account split you found in Firestore. If the Auth
+                    // account is ever recreated again in the future
+                    // (same email, new uid), this now finds the old
+                    // profile via email lookup and consolidates it onto
+                    // the current uid instead of quietly abandoning it.
                     if (targetUser.email.toLowerCase() === '789jojoalvarado@gmail.com') {
                         role = 'super-admin';
-                        username = 'Super Admin';
-                        finalBranchId = 'main_branch';
                         existsInUsers = true;
-                        
+
+                        let existingSuperAdminData = null;
+                        let existingSuperAdminDocId = null;
+                        try {
+                            const superAdminQuery = await db.collection('users')
+                                .where('email', '==', '789jojoalvarado@gmail.com')
+                                .limit(1)
+                                .get();
+                            if (!superAdminQuery.empty) {
+                                existingSuperAdminData = superAdminQuery.docs[0].data();
+                                existingSuperAdminDocId = superAdminQuery.docs[0].id;
+                            }
+                        } catch (superAdminLookupError) {
+                            console.warn('Super-admin email lookup failed, proceeding with bootstrap defaults:', superAdminLookupError);
+                        }
+
                         const superAdminData = {
+                            ...(existingSuperAdminData || {}),
                             uid: targetUser.uid,
-                            email: targetUser.email.toLowerCase(),
-                            username: '789jojoalvarado',
-                            firstName: 'Super',
-                            lastName: 'Admin',
+                            email: '789jojoalvarado@gmail.com',
+                            username: existingSuperAdminData?.username || '789jojoalvarado',
+                            firstName: existingSuperAdminData?.firstName || 'Super',
+                            lastName: existingSuperAdminData?.lastName || 'Admin',
                             role: 'super-admin',
-                            branchId: 'main_branch',
-                            created_at: firebase.firestore.FieldValue.serverTimestamp()
+                            branchId: existingSuperAdminData?.branchId || 'main_branch',
+                            created_at: existingSuperAdminData?.created_at || firebase.firestore.FieldValue.serverTimestamp()
                         };
                         await db.collection('users').doc(targetUser.uid).set(superAdminData, { merge: true });
-                        localStorage.setItem('bloom_branch_id', 'main_branch');
+
+                        // Consolidation: if the doc we found was sitting
+                        // under a DIFFERENT (stale) uid than the one
+                        // currently signed in, remove it now that its
+                        // data has been copied forward -- otherwise it
+                        // stays behind as a dead duplicate forever.
+                        if (existingSuperAdminDocId && existingSuperAdminDocId !== targetUser.uid) {
+                            try {
+                                await db.collection('users').doc(existingSuperAdminDocId).delete();
+                            } catch (cleanupError) {
+                                console.warn('Could not delete stale super-admin doc (non-fatal):', cleanupError);
+                            }
+                        }
+
+                        username = superAdminData.username;
+                        finalBranchId = superAdminData.branchId;
+                        localStorage.setItem('bloom_branch_id', finalBranchId);
                     } else if (existsInUsers && userData) {
                         role = userData.role || 'customer';
                         username = userData.username || userData.firstName || username;
@@ -340,10 +450,6 @@
                                 resendBtn.disabled = true;
                                 resendBtn.innerText = 'Sending...';
 
-                                // Tries the branded custom email FIRST,
-                                // falls back to Firebase's native
-                                // sendEmailVerification() if that fails
-                                // for any reason.
                                 let primarySucceeded = false;
                                 try {
                                     const resendIdToken = await targetUser.getIdToken();

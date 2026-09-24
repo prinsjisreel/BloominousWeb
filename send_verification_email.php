@@ -23,12 +23,12 @@ require_once __DIR__ . '/includes/firebase_admin.php';
 require_once __DIR__ . '/includes/mailer_config.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    bloom_json_response(['success' => false, 'message' => 'Method not allowed'], 405);
+    bloom_json_response(['success' => false, 'message' => 'Method not allowed'], 405); 
 }
 
 $idToken = bloom_get_bearer_token() ?? ($_POST['idToken'] ?? null);
 if (!$idToken) {
-    bloom_json_response(['success' => false, 'message' => 'Missing ID token'], 401);
+    bloom_json_response(['success' => false, 'message' => 'Missing ID token'], 401); 
 }
 
 try {
@@ -38,7 +38,7 @@ try {
 }
 
 try {
-    $userRecord = bloom_auth()->getUser($uid);
+    $userRecord = bloom_auth()->getUser($uid); 
 } catch (\Throwable $e) {
     bloom_json_response(['success' => false, 'message' => 'Account not found.'], 404);
 }
@@ -55,7 +55,7 @@ if ($userRecord->emailVerified) {
 // Build the continue URL from the request itself, so this works on
 // whatever domain it's actually deployed on without hardcoding one.
 $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost'; 
 $continueUrl = $scheme . '://' . $host . '/verify_email.php';
 
 try {

@@ -20,7 +20,29 @@ include 'templates/header.php';
     .filter-btn.active { background: #111827; color: #fff; border-color: #111827; }
     .config-input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #f0f0f0; background: #fafafa; font-weight: 700; font-size: 0.85rem; outline: none; }
     .config-input:focus { border-color: #7380ec; background: #fff; }
-    .config-label { display: block; font-size: 0.62rem; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .config-label { display: flex; align-items: center; gap: 6px; font-size: 0.62rem; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+
+    /* --- Plain-language tooltip ("?" circle) --- */
+    .info-tip {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 15px; height: 15px; border-radius: 50%;
+        background: #e5e7eb; color: #6b7280;
+        font-size: 9px; font-weight: 900; line-height: 1;
+        cursor: help; position: relative; flex-shrink: 0;
+        text-transform: none; letter-spacing: normal;
+    }
+    .info-tip:hover, .info-tip:focus { background: #7380ec; color: #fff; outline: none; }
+    .info-tip .info-tip-bubble {
+        display: none; position: absolute; bottom: 140%; left: 50%; transform: translateX(-50%);
+        width: 230px; background: #111827; color: #fff;
+        font-size: 0.68rem; font-weight: 600; line-height: 1.45;
+        text-transform: none; letter-spacing: normal;
+        padding: 10px 12px; border-radius: 10px; z-index: 30;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    }
+    .info-tip:hover .info-tip-bubble, .info-tip:focus .info-tip-bubble { display: block; }
+    .config-section-title { grid-column: 1 / -1; font-size: 0.7rem; font-weight: 900; color: #7380ec; text-transform: uppercase; letter-spacing: 1px; margin: 18px 0 4px; }
+    .config-section-title:first-child { margin-top: 0; }
 </style>
 <main style="padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
@@ -64,55 +86,104 @@ include 'templates/header.php';
     <?php if ($isAdminUser): ?>
     <!-- Threshold Configuration (admin/super-admin only) -->
     <div style="background:white; padding:2.5rem; border-radius:30px; margin-top:3rem; border:1px dashed #ddd;">
-        <h4 class="brand-font text-2xl font-black mb-2 text-gray-800">Detection Thresholds</h4>
-        <p class="text-xs text-gray-400 font-medium mb-8">Changes apply immediately to every branch — no redeploy needed.</p>
+        <h4 class="brand-font text-2xl font-black mb-2 text-gray-800">Detection Settings</h4>
+        <p class="text-xs text-gray-400 font-medium mb-8">Changes apply immediately to every branch — no redeploy needed. Hover the <span class="info-tip">?</span> next to any setting for its definition.</p>
         <form id="anomalyConfigForm" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:20px;">
+
+            <div class="config-section-title">Sale Value</div>
             <div>
-                <label class="config-label">Value Spike — Medium Multiplier (x avg)</label>
+                <label class="config-label">Elevated Sale Threshold
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The size of a transaction, expressed as a multiple of this branch's typical sale, at which a sale is considered elevated.</span></span>
+                </label>
                 <input type="number" step="0.1" id="cfg-avgMultiplier" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Value Spike — Critical Multiplier (x avg)</label>
+                <label class="config-label">Severe Sale Threshold
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The size of a transaction, expressed as a multiple of this branch's typical sale, at which a sale is considered severely elevated.</span></span>
+                </label>
                 <input type="number" step="0.1" id="cfg-criticalMultiplier" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Min. Transactions for Baseline</label>
+                <label class="config-label">Minimum Sales for Baseline
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The number of prior walk-in sales at a branch required to establish a reliable typical-sale amount.</span></span>
+                </label>
                 <input type="number" id="cfg-minBaselineTransactions" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Fallback Flat Threshold (₱)</label>
+                <label class="config-label">Fallback Value Threshold (₱)
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">A fixed peso amount used to judge whether a sale is elevated when a branch does not yet have enough sales history to establish a baseline.</span></span>
+                </label>
                 <input type="number" id="cfg-fallbackHighValueThreshold" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Void Window (hours)</label>
+                <label class="config-label">Peak Season Elevated Threshold
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The Elevated Sale Threshold used specifically during the Peak Season Dates configured below.</span></span>
+                </label>
+                <input type="number" step="0.1" id="cfg-peakAvgMultiplier" class="config-input" required>
+            </div>
+            <div>
+                <label class="config-label">Peak Season Severe Threshold
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The Severe Sale Threshold used specifically during the Peak Season Dates configured below.</span></span>
+                </label>
+                <input type="number" step="0.1" id="cfg-peakCriticalMultiplier" class="config-input" required>
+            </div>
+            <div style="grid-column: 1 / -1;">
+                <label class="config-label">Peak Season Dates (one range per line, e.g. 2026-02-10 to 2026-02-15)
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">Date ranges during which higher sales volume is expected and normal, such as known holidays or seasonal events.</span></span>
+                </label>
+                <textarea id="cfg-peakDates" class="config-input" rows="3" placeholder="2026-02-10 to 2026-02-15&#10;2026-05-04 to 2026-05-11"></textarea>
+            </div>
+
+            <div class="config-section-title">Voids &amp; Refunds</div>
+            <div>
+                <label class="config-label">Void Review Window (hours)
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The rolling time period over which a staff member's voids and refunds are counted.</span></span>
+                </label>
                 <input type="number" id="cfg-voidWindowHours" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Void Count — Medium</label>
+                <label class="config-label">Elevated Void Count
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The number of voids or refunds by one staff member within the Void Review Window considered elevated.</span></span>
+                </label>
                 <input type="number" id="cfg-voidCountMedium" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Void Count — Critical</label>
+                <label class="config-label">Severe Void Count
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The number of voids or refunds by one staff member within the Void Review Window considered severe.</span></span>
+                </label>
                 <input type="number" id="cfg-voidCountCritical" class="config-input" required>
             </div>
+
+            <div class="config-section-title">Discounts</div>
             <div>
-                <label class="config-label">Discount % — Medium</label>
+                <label class="config-label">Elevated Discount Percentage
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The manual discount percentage on a single transaction considered elevated.</span></span>
+                </label>
                 <input type="number" id="cfg-discountMediumPercent" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Discount % — Critical</label>
+                <label class="config-label">Severe Discount Percentage
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The manual discount percentage on a single transaction considered severe.</span></span>
+                </label>
                 <input type="number" id="cfg-discountCriticalPercent" class="config-input" required>
             </div>
+
+            <div class="config-section-title">Store Hours</div>
             <div>
-                <label class="config-label">Store Opening Time</label>
+                <label class="config-label">Store Opening Time
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The time of day this branch normally opens for business.</span></span>
+                </label>
                 <input type="time" id="cfg-storeOpenTime" class="config-input" required>
             </div>
             <div>
-                <label class="config-label">Store Closing Time</label>
+                <label class="config-label">Store Closing Time
+                    <span class="info-tip" tabindex="0">?<span class="info-tip-bubble">The time of day this branch normally closes for business.</span></span>
+                </label>
                 <input type="time" id="cfg-storeCloseTime" class="config-input" required>
             </div>
+
             <div style="display:flex; align-items:flex-end; gap:12px;">
-                <button type="submit" id="saveConfigBtn" class="btn-primary" style="width:100%; padding:14px; text-transform:uppercase; letter-spacing:1px; font-size:0.75rem;">Save Thresholds</button>
+                <button type="submit" id="saveConfigBtn" class="btn-primary" style="width:100%; padding:14px; text-transform:uppercase; letter-spacing:1px; font-size:0.75rem;">Save Settings</button>
                 <span id="saveStatus" style="font-size:0.7rem; font-weight:800; color:#16a34a; white-space:nowrap; opacity:0; transition:opacity 0.3s;">
                     <i class="fa-solid fa-circle-check"></i> Saved
                 </span>
@@ -179,6 +250,26 @@ include 'templates/header.php';
         `).join('');
     }
 
+    // Turns the textarea's "2026-02-10 to 2026-02-15" lines into the
+    // {start, end} array shape checkValueSpike() expects.
+    function parsePeakDatesText(text) {
+        return (text || '')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .map(line => {
+                const parts = line.split(/\s+to\s+/i).map(p => p.trim());
+                return { start: parts[0] || '', end: parts[1] || parts[0] || '' };
+            })
+            .filter(r => r.start && r.end);
+    }
+
+    // The reverse of the above — turns the stored array back into
+    // editable textarea lines.
+    function peakDatesToText(ranges) {
+        return (ranges || []).map(r => `${r.start} to ${r.end}`).join('\n');
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         db.collection('salesAnomalies').orderBy('timestamp', 'desc').limit(300).onSnapshot(snap => {
             allAnomalies = [];
@@ -211,9 +302,12 @@ include 'templates/header.php';
             }
             const cfg = await AnomalyEngine.getConfig();
             Object.keys(cfg).forEach(key => {
+                if (key === 'peakDates') return; // handled separately below (array, not a plain input)
                 const el = document.getElementById('cfg-' + key);
                 if (el) el.value = cfg[key];
             });
+            const peakDatesEl = document.getElementById('cfg-peakDates');
+            if (peakDatesEl) peakDatesEl.value = peakDatesToText(cfg.peakDates);
         }
 
         loadConfigIntoForm();
@@ -231,6 +325,9 @@ include 'templates/header.php';
                     criticalMultiplier: parseFloat(document.getElementById('cfg-criticalMultiplier').value),
                     minBaselineTransactions: parseInt(document.getElementById('cfg-minBaselineTransactions').value),
                     fallbackHighValueThreshold: parseFloat(document.getElementById('cfg-fallbackHighValueThreshold').value),
+                    peakAvgMultiplier: parseFloat(document.getElementById('cfg-peakAvgMultiplier').value),
+                    peakCriticalMultiplier: parseFloat(document.getElementById('cfg-peakCriticalMultiplier').value),
+                    peakDates: parsePeakDatesText(document.getElementById('cfg-peakDates').value),
                     voidWindowHours: parseFloat(document.getElementById('cfg-voidWindowHours').value),
                     voidCountMedium: parseInt(document.getElementById('cfg-voidCountMedium').value),
                     voidCountCritical: parseInt(document.getElementById('cfg-voidCountCritical').value),
@@ -255,7 +352,7 @@ include 'templates/header.php';
                 alert('Error saving thresholds: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerText = 'Save Thresholds';
+                btn.innerText = 'Save Settings';
             }
         };
         <?php endif; ?>

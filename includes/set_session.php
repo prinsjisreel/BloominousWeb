@@ -16,11 +16,69 @@
  * truth the rules themselves use via getRole()) — never from the client.
  */
 
+// ---------------------------------------------------------------------------
+// Shutdown tracer — registered FIRST so any fatal below lands in
+// set_session_trace.log with file:line. Turns Apache's opaque
+// ERR_CONNECTION_RESET into a diagnosable message.
+// ---------------------------------------------------------------------------
+register_shutdown_function(function () {
+    $e = error_get_last();
+    $line = $e
+        ? "FATAL: {$e['message']} in {$e['file']}:{$e['line']}"
+        : 'clean exit';
+    @file_put_contents(__DIR__ . '/set_session_trace.log', date('c') . " — {$line}\n", FILE_APPEND);
+});
+
 require_once __DIR__ . '/firebase_admin.php';
+
+// Keep stray PHP notices OUT of this JSON response body — a warning
+// printed inline here corrupts the response and breaks response.json()
+// on the client.
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
+// These two are computed unconditionally, every request — the forced
+// setcookie() call below needs them regardless of whether a session was
+// already active or brand new this request.
+$bloomIsHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+$bloomSessionLifetimeSeconds = 60 * 60 * 24 * 30; // 30 days — stay logged in until actual logout
+
+// Only configure cookie PARAMS if no session is active yet — calling
+// session_set_cookie_params() on an already-active session throws a PHP
+// warning.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_set_cookie_params([
+        'lifetime' => $bloomSessionLifetimeSeconds,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $bloomIsHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    ini_set('session.gc_maxlifetime', (string) $bloomSessionLifetimeSeconds);
+}
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
+// FIXED: PHP only sends a Set-Cookie header when a session is first
+// CREATED — an existing session cookie is just silently reused with
+// whatever expiration it originally had, no matter what gets configured
+// afterward. This is THE endpoint that runs right after successful
+// login, so forcing a fresh Set-Cookie here — every time, unconditionally
+// — is what actually guarantees the browser walks away from a
+// successful login holding a correctly-dated 30-day cookie, instead of
+// silently keeping whatever it already had.
+setcookie(session_name(), session_id(), [
+    'expires' => time() + $bloomSessionLifetimeSeconds,
+    'path' => '/',
+    'domain' => '',
+    'secure' => $bloomIsHttps,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -150,6 +208,20 @@ if ($role === 'customer') {
     //
     // The signal itself isn't thrown away — it's recorded for admin
     // visibility instead of used to block the customer.
+    //
+    // FIXED: previously wrote via bloom_firestore() (the gRPC client),
+    // wrapped in a try/catch that could not actually protect against
+    // it — this local environment's grpc extension crashes the ENTIRE
+    // PHP process natively the instant a real Firestore connection
+    // opens, which bypasses PHP's exception handling and shutdown
+    // machinery completely (confirmed earlier via
+    // cleanup_plaintext_passwords.php dying with zero output at the
+    // exact same call). Since this block runs for EVERY successful
+    // customer login (not just flagged ones — see the deviceHashes
+    // block below), it explained why customer login specifically
+    // (never admin, which never reaches this code) was failing with
+    // ERR_CONNECTION_RESET. Rewritten to use only the REST-based writer,
+    // which needs no gRPC at all.
     if ($fraudCheckData !== null) {
         $isFlagged = ($fraudCheckData['isRestricted'] ?? false) === true
             || (int) ($fraudCheckData['fraudScore'] ?? 0) >= 50;
@@ -158,12 +230,13 @@ if ($role === 'customer') {
 
         if ($isFlagged && !$isKnownDevice) {
             try {
-                bloom_firestore()->collection('notifications')->add([
+                $notifId = bin2hex(random_bytes(10));
+                bloom_firestore_set_document_rest('notifications', $notifId, [
                     'title' => 'Flagged Account — New Device Login',
                     'message' => "Account [$uid] ($email) is already flagged (isRestricted or fraudScore >= 50) and just logged in from an unrecognized device.",
                     'type' => 'fraud',
                     'branchId' => $branchId,
-                    'created_at' => \Google\Cloud\Firestore\FieldValue::serverTimestamp(),
+                    'created_at' => new \DateTimeImmutable('now', new \DateTimeZone('UTC')),
                     'read' => false,
                 ]);
             } catch (\Throwable $e) {
@@ -177,13 +250,90 @@ if ($role === 'customer') {
 // the account for future logins, regardless of current flag status, so a
 // history exists by the time an account does become flagged. Best-effort:
 // never block login over this write failing.
+//
+// FIXED: same gRPC-crash reasoning as above. This block runs for EVERY
+// successful customer login unconditionally, which is exactly why the
+// crash was 100% reproducible on this local environment, not an
+// occasional flagged-account edge case.
+//
+// bloom_firestore_set_document_rest() does a FULL document replace, not
+// a partial update — so the existing document is read first and the new
+// hash merged into it in PHP, then the COMPLETE document (every field,
+// not just deviceHashes) is written back. Skipping this read-merge step
+// and writing only {deviceHashes: [...]} would have silently deleted
+// every other field on the customer's document (name, email, points,
+// fraudScore, everything) on their very next login.
 if ($role === 'customer' && $deviceHash !== '') {
     try {
-        bloom_firestore()->collection('customers')->document($uid)->update([
-            ['path' => 'deviceHashes', 'value' => \Google\Cloud\Firestore\FieldValue::arrayUnion([$deviceHash])],
-        ]);
+        $currentCustomerDoc = bloom_firestore_get_document_rest('customers', $uid) ?? [];
+        $existingHashes = $currentCustomerDoc['deviceHashes'] ?? [];
+        if (!in_array($deviceHash, $existingHashes, true)) {
+            $existingHashes[] = $deviceHash;
+        }
+        $currentCustomerDoc['deviceHashes'] = $existingHashes;
+        bloom_firestore_set_document_rest('customers', $uid, $currentCustomerDoc);
     } catch (\Throwable $e) {
         error_log('set_session.php: could not record deviceHash for ' . $uid . ': ' . $e->getMessage());
+    }
+}
+
+// NEW: same device-hash recording as above, now for staff/admin/
+// super-admin/delivery too -- this closes the actual gap being fixed
+// here. Previously device-fingerprint tracking existed ONLY for
+// customers on web, while mobile tracked it (when working) only for
+// staff. Neither platform covered both consistently. This block
+// mirrors the customer block exactly: read-merge-write against the
+// FULL document (never a partial {deviceHashes: [...]} write, which
+// would wipe every other field on next login), targeting
+// 'employees/{uid}' since that's where staff profile data (and, per
+// the mobile-side fix, device history) lives after the users/employees
+// collection split. Also raises the same "Staff Login — New Device"
+// notification mobile's _checkAndTrackDevice() already does, so both
+// platforms produce the identical notification for the identical event.
+if (in_array($role, ['admin', 'super-admin', 'staff', 'employee', 'delivery'], true) && $deviceHash !== '') {
+    try {
+        $currentEmployeeDoc = bloom_firestore_get_document_rest('employees', $uid) ?? [];
+
+        // null (never tracked before) vs. an array (tracked, possibly
+        // empty) are distinguished on purpose -- this is what decides
+        // whether an unrecognized hash means "brand new account, no
+        // history yet" (no notification) or "this account has history,
+        // and THIS device isn't part of it" (notification fires).
+        $priorHashes = $currentEmployeeDoc['deviceHashes'] ?? null;
+        $hasNoDeviceHistoryYet = $priorHashes === null;
+        $knownHashesList = is_array($priorHashes) ? $priorHashes : [];
+        $isRecognized = in_array($deviceHash, $knownHashesList, true);
+
+        if (!$isRecognized && !$hasNoDeviceHistoryYet) {
+            try {
+                $notifId = bin2hex(random_bytes(10));
+                bloom_firestore_set_document_rest('notifications', $notifId, [
+                    'title' => 'Staff Login — New Device',
+                    'message' => "$email logged into the admin portal from a device not previously seen on this account.",
+                    'type' => 'fraud',
+                    'branchId' => $branchId,
+                    'created_at' => new \DateTimeImmutable('now', new \DateTimeZone('UTC')),
+                    'read' => false,
+                ]);
+            } catch (\Throwable $notifError) {
+                error_log('set_session.php: could not log staff new-device notification for ' . $uid . ': ' . $notifError->getMessage());
+            }
+        }
+
+        if (!$isRecognized) {
+            $knownHashesList[] = $deviceHash;
+        }
+        $currentEmployeeDoc['deviceHashes'] = $knownHashesList;
+        // Only fill these in if genuinely missing -- e.g. the very
+        // first time this employee ever logs in via web and no
+        // 'employees' doc existed at all yet. Never overwrites real
+        // profile data (firstName, branchId, etc.) that's already there.
+        $currentEmployeeDoc['uid'] = $currentEmployeeDoc['uid'] ?? $uid;
+        $currentEmployeeDoc['email'] = $currentEmployeeDoc['email'] ?? $email;
+        $currentEmployeeDoc['role'] = $currentEmployeeDoc['role'] ?? $role;
+        bloom_firestore_set_document_rest('employees', $uid, $currentEmployeeDoc);
+    } catch (\Throwable $e) {
+        error_log('set_session.php: could not record employee deviceHash for ' . $uid . ': ' . $e->getMessage());
     }
 }
 

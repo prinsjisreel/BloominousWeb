@@ -8,7 +8,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // Sinisiguro na admin lamang ang makakapasok dito.
 if (!isset($_SESSION['admin_id'])) {
-    header("Location: index.php?error=unauthorized");
+    header("Location: landing_page.php?error=unauthorized");
     exit();
 }
 

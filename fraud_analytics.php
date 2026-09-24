@@ -12,6 +12,7 @@ include 'templates/header.php';
     .risk-low { background: #e8f8f0; color: #14532d; border: 1px solid #bbf7d0; }     
     .risk-medium { background: #fffbeb; color: #78350f; border: 1px solid #fef3c7; }     
     .risk-high { background: #fef2f2; color: #7f1d1d; border: 1px solid #fee2e2; }     
+    .risk-critical { background: #fef2f2; color: #7f1d1d; border: 1px solid #fee2e2; }
     .risk-blocked { background: #111827; color: #ffffff; border: 1px solid #374151; }     
     .fraud-card { background: white; border: 1px solid #f0f0f0; padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.01); transition: all 0.3s ease; }     
     .telemetry-track { background: #f3f4f6; height: 12px; width: 100%; border-radius: 20px; overflow: hidden; }     
@@ -19,8 +20,30 @@ include 'templates/header.php';
     .fill-low { background: linear-gradient(90deg, #10b981, #34d399); }     
     .fill-medium { background: linear-gradient(90deg, #f59e0b, #fbbf24); }     
     .fill-high { background: linear-gradient(90deg, #ef4444, #f87171); }     
+    .fill-critical { background: linear-gradient(90deg, #ef4444, #f87171); }
     .fill-blocked { background: linear-gradient(90deg, #111827, #4b5563); }     
-    .btn-restrict { padding: 6px 14px; border-radius: 20px; font-size: 0.65rem; font-weight: 900; text-transform: uppercase; border: none; cursor: pointer; transition: 0.2s; } 
+    .btn-restrict { padding: 6px 14px; border-radius: 20px; font-size: 0.65rem; font-weight: 900; text-transform: uppercase; border: none; cursor: pointer; transition: 0.2s; }
+
+    /* Audit trail block is now a button, not just static text */
+    .audit-trail-btn {
+        width: 100%; text-align: left; cursor: pointer; border: none;
+        background: #f9fafb; padding: 0.75rem; border-radius: 12px; border: 1px solid #f0f0f0;
+        font-family: inherit; transition: 0.15s;
+    }
+    .audit-trail-btn:hover { background: #f3f4f6; border-color: #e5e7eb; }
+    .audit-trail-btn .view-hint { font-size: 0.65rem; font-weight: 800; color: #7380ec; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Fraud History modal */
+    #fraudHistoryOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
+    #fraudHistoryOverlay.open { display: flex; }
+    #fraudHistoryModal { background: #fff; border-radius: 24px; padding: 2rem; max-width: 640px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #fraudHistoryModal h3 { font-size: 1.3rem; font-weight: 900; margin: 0 0 0.25rem; }
+    #fraudHistoryModal .close-btn { float: right; background: none; border: none; font-size: 1.1rem; color: #999; cursor: pointer; }
+    .fh-order { border: 1px solid #f0f0f0; border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; }
+    .fh-order-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 10px; }
+    .fh-flags { font-size: 0.78rem; color: #444; line-height: 1.6; }
+    .fh-flags li { margin-left: 1.1rem; }
+    .fh-empty { text-align: center; color: #bbb; font-style: italic; padding: 2rem; }
 </style> 
 <main style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">     
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">         
@@ -61,7 +84,18 @@ include 'templates/header.php';
     <div id="fraudAnalyticsGrid" style="display:grid; grid-template-columns: 1fr; gap:24px;">         
         <div class="text-center p-12 text-gray-300 italic">Initializing risk directories...</div>     
     </div> 
-</main> 
+</main>
+
+<!-- Fraud History Modal: opened by clicking a customer's Audit Trail block -->
+<div id="fraudHistoryOverlay">
+    <div id="fraudHistoryModal">
+        <button class="close-btn" onclick="closeFraudHistory()"><i class="fa-solid fa-xmark"></i></button>
+        <h3 id="fhCustomerName">Fraud History</h3>
+        <p class="text-xs text-gray-400 font-mono mb-4" id="fhCustomerUid"></p>
+        <div id="fhOrderList"><div class="fh-empty">Loading order history...</div></div>
+    </div>
+</div>
+
 <script>     
     function maskCustomerName(name) {         
         if (!name) return "A********* U***";         
@@ -109,7 +143,87 @@ include 'templates/header.php';
                 });             
             } catch(e) { alert('Admin mutation access error: ' + e.message); }         
         }     
-    }     
+    }
+
+    /**
+     * NEW — click-through Fraud History.
+     *
+     * FIX (index error): the original version chained
+     * .where('user_id','==',uid).orderBy('createdAt','desc') — an equality
+     * filter on one field PLUS a sort on a DIFFERENT field. Firestore only
+     * auto-creates indexes for a filter and a sort on the SAME field; the
+     * moment they're different fields, it demands a manually-created
+     * composite index (that's the console link you saw in the modal).
+     * sales_anomalies.js already hit this exact wall for its own queries
+     * and solved it the same way this now does: drop the orderBy from the
+     * query itself, pull the (small, per-customer) result set, and sort
+     * it in JavaScript instead. No index needed, ever.
+     *
+     * FIX (privacy): displayName is now ALWAYS the masked name, regardless
+     * of this account's risk tier — the main card may unmask a high-risk
+     * name for the admin's attention, but this detail view stays masked
+     * the same way every other identity-bearing surface in this dashboard
+     * does by default.
+     */
+    function openFraudHistory(uid, maskedDisplayName) {
+        document.getElementById('fhCustomerName').innerText = 'Fraud History — ' + maskedDisplayName;
+        document.getElementById('fhCustomerUid').innerText = 'UID: ' + uid;
+        document.getElementById('fhOrderList').innerHTML = '<div class="fh-empty">Loading order history...</div>';
+        document.getElementById('fraudHistoryOverlay').classList.add('open');
+
+        db.collection('orders')
+            .where('user_id', '==', uid)
+            // NOTE: no .orderBy() here on purpose — see the comment above.
+            .limit(50)
+            .get()
+            .then(snap => {
+                const listEl = document.getElementById('fhOrderList');
+                if (snap.empty) {
+                    listEl.innerHTML = '<div class="fh-empty">No web orders on file for this account yet.</div>';
+                    return;
+                }
+
+                // Sort newest-first ourselves, client-side, using the
+                // Timestamp's own comparable millis value.
+                const orders = [];
+                snap.forEach(doc => orders.push({ id: doc.id, ...doc.data() }));
+                orders.sort((a, b) => {
+                    const aMs = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+                    const bMs = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+                    return bMs - aMs;
+                });
+
+                let html = '';
+                orders.forEach(o => {
+                    const when = o.createdAt && o.createdAt.toDate ? o.createdAt.toDate().toLocaleString() : '...';
+                    const tier = o.riskTier || null;
+                    const badgeClass = tier ? 'risk-' + tier : 'risk-low';
+                    const flags = Array.isArray(o.fraudFlags) ? o.fraudFlags : [];
+                    html += `
+                        <div class="fh-order">
+                            <div class="fh-order-top">
+                                <div>
+                                    <span class="font-bold text-sm text-gray-800">${o.invoiceId || o.id}</span>
+                                    <span class="text-xs text-gray-400 ml-2">${when}</span>
+                                </div>
+                                <span class="risk-badge ${badgeClass}">${tier || 'n/a'} &bull; score ${o.fraudScore ?? 'n/a'}</span>
+                            </div>
+                            ${flags.length > 0
+                                ? `<ul class="fh-flags">${flags.map(f => `<li>${f}</li>`).join('')}</ul>`
+                                : `<p class="fh-flags text-gray-300 italic">No flags raised on this order.</p>`}
+                        </div>
+                    `;
+                });
+                listEl.innerHTML = html;
+            })
+            .catch(err => {
+                document.getElementById('fhOrderList').innerHTML = `<div class="fh-empty">Could not load history: ${err.message}</div>`;
+            });
+    }
+
+    function closeFraudHistory() {
+        document.getElementById('fraudHistoryOverlay').classList.remove('open');
+    }
     
     document.addEventListener('DOMContentLoaded', () => {         
         const fraudGrid = document.getElementById('fraudAnalyticsGrid');         
@@ -140,22 +254,41 @@ include 'templates/header.php';
                     let rawScore = parseInt(c.fraudScore || 10);                     
                     combinedScores += rawScore;                     
                     
-                    let riskClass = 'risk-low', fillClass = 'fill-low', statusLabel = 'Account Safe';                     
-                    if (rawScore >= 50 && rawScore < 75) {                         
-                        riskClass = 'risk-medium'; fillClass = 'fill-medium'; statusLabel = 'Suspicious Profile';                     
-                    } else if (rawScore >= 75 && rawScore < 100) {                         
-                        riskClass = 'risk-high'; fillClass = 'fill-high'; statusLabel = 'Critical Scrutiny';                         
-                        highRiskCount++;                     
-                    } else if (c.status === 'blocked' || rawScore >= 100) {                         
-                        riskClass = 'risk-blocked'; fillClass = 'fill-blocked'; statusLabel = 'Permanently Terminated';                         
-                        highRiskCount++;                     
-                    }                     
+                    // Prefer the actual riskTier submit_order.php now writes
+                    // (Low/Medium/High/Critical — the same scoring model
+                    // discussed with the shop owner). Accounts that predate
+                    // this change won't have riskTier yet, so fall back to
+                    // the original score-band guess for those only.
+                    let riskClass, fillClass, statusLabel;
+                    if (c.status === 'blocked' || rawScore >= 100) {
+                        riskClass = 'risk-blocked'; fillClass = 'fill-blocked'; statusLabel = 'Permanently Terminated';
+                        highRiskCount++;
+                    } else if (c.riskTier) {
+                        const tierLabels = { low: 'Account Safe', medium: 'Suspicious Profile', high: 'Critical Scrutiny', critical: 'Critical Scrutiny' };
+                        riskClass = 'risk-' + c.riskTier;
+                        fillClass = 'fill-' + c.riskTier;
+                        statusLabel = tierLabels[c.riskTier] || 'Account Safe';
+                        if (c.riskTier === 'high' || c.riskTier === 'critical') highRiskCount++;
+                    } else if (rawScore >= 50 && rawScore < 75) {
+                        riskClass = 'risk-medium'; fillClass = 'fill-medium'; statusLabel = 'Suspicious Profile';
+                    } else if (rawScore >= 75 && rawScore < 100) {
+                        riskClass = 'risk-high'; fillClass = 'fill-high'; statusLabel = 'Critical Scrutiny';
+                        highRiskCount++;
+                    } else {
+                        riskClass = 'risk-low'; fillClass = 'fill-low'; statusLabel = 'Account Safe';
+                    }
                     
+                    const maskedName = maskCustomerName(accountName);
                     const anonymizedName = (rawScore >= 75)                          
                         ? `<span class="text-red-600 font-bold"><i class="fa-solid fa-eye mr-1 animate-pulse"></i> ${accountName}</span>`                          
-                        : maskCustomerName(accountName);                     
+                        : maskedName;                     
                     
-                    const isRestricted = c.isRestricted === true;                     
+                    const isRestricted = c.isRestricted === true;
+                    // Always the MASKED name goes into the click handler —
+                    // the History modal is a privacy-sensitive detail view
+                    // and should never reveal the real name, even for
+                    // accounts the main card is currently unmasking.
+                    const safeMaskedName = maskedName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     html += `                     
                     <div class="fraud-card">                         
                         <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-4">                             
@@ -182,10 +315,13 @@ include 'templates/header.php';
                                 </button>`}                             
                             </div>                         
                         </div>                         
-                        <div class="text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-gray-100 font-semibold">                             
-                            <span class="block text-[9px] text-gray-400 uppercase font-black mb-1">Audit Trail Logging Flags</span>                             
-                            <i class="fa-solid fa-circle-nodes text-pink-500 mr-1"></i> ${c.fraudFlags && c.fraudFlags.length > 0 ? c.fraudFlags.join(', ') : 'Profile registers secure telemetry baselines.'}                         
-                        </div>                     
+                        <button type="button" class="audit-trail-btn" onclick="openFraudHistory('${c.id}', '${safeMaskedName}')">
+                            <span class="block text-[9px] text-gray-400 uppercase font-black mb-1">Audit Trail Logging Flags</span>
+                            <span class="text-xs text-gray-500 font-semibold">
+                                <i class="fa-solid fa-circle-nodes text-pink-500 mr-1"></i> ${c.fraudFlags && c.fraudFlags.length > 0 ? c.fraudFlags.slice(-3).join(', ') : 'Profile registers secure telemetry baselines.'}
+                            </span>
+                            <span class="view-hint block mt-1"><i class="fa-solid fa-clock-rotate-left mr-1"></i>View full fraud history &rarr;</span>
+                        </button>
                     </div>`;                 
                 });                 
                 fraudGrid.innerHTML = html;             

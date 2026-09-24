@@ -369,6 +369,15 @@ if ($amount <= 0 && empty($items)) {
             <button id="resendOtpBtn" type="button" class="hidden text-[#7B79F2] font-black text-[10px] uppercase tracking-widest hover:text-[#5a58d1] transition-colors">Resend Code</button>
             <button id="closeSmsModalBtn" type="button" class="text-gray-300 hover:text-gray-500 font-bold text-[10px] uppercase tracking-widest transition-colors">Cancel</button>
         </div>
+
+        <!-- NEW: shown only when linkWithPhoneNumber fails because real
+             SMS isn't active yet on this Firebase project (billing not
+             enabled). Lists registered test numbers as the current
+             working alternative — never auto-selects one. -->
+        <div id="billingNotEnabledNotice" class="hidden text-left mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+            <p class="text-[11px] font-bold text-amber-800 leading-relaxed">Automated SMS isn't active yet for this project.</p>
+            <p class="text-[10px] text-amber-700 mt-1 leading-relaxed" id="billingNotEnabledDetail"></p>
+        </div>
         
         <div id="recaptcha-container" class="hidden"></div>
     </div>
@@ -499,6 +508,8 @@ if ($amount <= 0 && empty($items)) {
 
             const badge = document.getElementById('smsTestModeBadge');
             const subtitle = document.getElementById('smsModalSubtitle');
+            const billingNotice = document.getElementById('billingNotEnabledNotice');
+            billingNotice.classList.add('hidden'); // reset from any previous failed attempt
             if (isTestNumber) {
                 badge.classList.remove('hidden');
                 subtitle.innerText = 'This is a registered test number — no real SMS will be sent. Use the fixed test code from Firebase Console.';
@@ -516,7 +527,24 @@ if ($amount <= 0 && empty($items)) {
                 pendingConfirmationResult = await auth.currentUser.linkWithPhoneNumber(phone, window.recaptchaVerifier);
                 startResendTimer();
             } catch (error) {
-                alert("SMS Error: " + error.message);
+                // NEW: auth/billing-not-enabled is Firebase's own code for
+                // "real SMS delivery isn't active for this project yet"
+                // (the Blaze plan hasn't been enabled). Registered test
+                // numbers bypass real sending entirely and never hit this
+                // code, so this branch only fires for a genuine, non-test
+                // number — meaning the honest answer right now is "this
+                // isn't live yet," not "something is broken." Never
+                // auto-selects a test number for the person; just tells
+                // them plainly which ones already work.
+                if (error.code === 'auth/billing-not-enabled') {
+                    const detailEl = document.getElementById('billingNotEnabledDetail');
+                    detailEl.innerText = testPhoneNumbers.length > 0
+                        ? 'For now, use one of the registered test numbers instead: ' + testPhoneNumbers.join(', ')
+                        : 'No test numbers are registered yet — add one under Firebase Console → Authentication → Sign-in method → Phone → "Phone numbers for testing."';
+                    billingNotice.classList.remove('hidden');
+                } else {
+                    alert("SMS Error: " + error.message);
+                }
             }
         }
 

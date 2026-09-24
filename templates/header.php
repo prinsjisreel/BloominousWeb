@@ -1,7 +1,44 @@
 <?php
+// These two are computed unconditionally, every request — the forced
+// setcookie() call below needs them regardless of whether a session was
+// already active or brand new this request.
+$bloomIsHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+$bloomSessionLifetimeSeconds = 60 * 60 * 24 * 30; // 30 days — stay logged in until actual logout
+
+// Only configure cookie PARAMS if no session is active yet — calling
+// session_set_cookie_params() on an already-active session throws a PHP
+// warning.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_set_cookie_params([
+        'lifetime' => $bloomSessionLifetimeSeconds,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $bloomIsHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    ini_set('session.gc_maxlifetime', (string) $bloomSessionLifetimeSeconds);
+}
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
+// FIXED: PHP only sends a Set-Cookie header when a session is first
+// CREATED — an existing session cookie is just silently reused with
+// whatever expiration it originally had, no matter what gets configured
+// afterward. Since this file runs on EVERY admin page after login, this
+// forces a fresh Set-Cookie on every single page load — a sliding
+// window, so an actively used account effectively never expires.
+setcookie(session_name(), session_id(), [
+    'expires' => time() + $bloomSessionLifetimeSeconds,
+    'path' => '/',
+    'domain' => '',
+    'secure' => $bloomIsHttps,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 
 $current_page = basename($_SERVER['PHP_SELF']);
 $user_role = $_SESSION['role'] ?? $_SESSION['admin_role'] ?? '';
@@ -32,7 +69,44 @@ if ($user_role === 'delivery') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloominous Admin</title>
+
+    <!-- NEW: Theme resolution -- runs BEFORE Tailwind/CSS load and BEFORE
+         the page paints, so there is no light-mode "flash" that then
+         flips to dark a moment later. Resolution order, exactly as
+         requested: an explicit saved choice always wins; otherwise the
+         browser's own OS/system dark-mode setting decides; otherwise
+         light. The <html> element gets class="dark" (for Tailwind's
+         `dark:` variant to key off of) AND data-theme="dark" (for the
+         plain-CSS variables below, which don't depend on Tailwind at
+         all) -- both are set together so either styling approach works
+         on any given page. -->
+    <script>
+        (function () {
+            const saved = localStorage.getItem('bloom_theme'); // 'dark' | 'light' | null
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDark = saved ? saved === 'dark' : systemPrefersDark;
+            const root = document.documentElement;
+            if (isDark) {
+                root.classList.add('dark');
+                root.setAttribute('data-theme', 'dark');
+            } else {
+                root.classList.remove('dark');
+                root.setAttribute('data-theme', 'light');
+            }
+        })();
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // NEW: tells Tailwind to switch on the presence of the 'dark'
+        // class on <html> (set by the script above) rather than its
+        // default behavior, which otherwise ONLY follows the OS setting
+        // live with no way for a saved user preference to override it.
+        // This is what makes `dark:bg-[#1A1A1A]`-style utility classes
+        // usable on any page from here on.
+        tailwind.config = { darkMode: 'class' };
+    </script>
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
@@ -79,6 +153,30 @@ if ($user_role === 'delivery') {
             localStorage.setItem('bloom_branch_id', branchId);
             window.location.reload();
         };
+
+        // NEW: theme API, callable from ANY page (e.g. settings.php's
+        // Dark Mode switch). Persists the explicit choice so it's what
+        // the resolution script in <head> finds on every future page
+        // load -- from this point on, the saved choice always wins over
+        // the system preference, exactly like the mobile app's own
+        // _persistTheme() -> shared_preferences flow. A full page
+        // reload (rather than a live class toggle) is used deliberately
+        // so every element on the page -- including ones rendered by
+        // inline PHP <?php ?> conditionals that only run once per
+        // request -- gets a consistent, correctly-themed render, rather
+        // than a partial live-DOM flip that could miss something.
+        window.setBloomTheme = (mode) => {
+            localStorage.setItem('bloom_theme', mode); // 'dark' or 'light'
+            window.location.reload();
+        };
+        window.toggleBloomTheme = () => {
+            const isDark = document.documentElement.classList.contains('dark');
+            window.setBloomTheme(isDark ? 'light' : 'dark');
+        };
+        // Lets a page (e.g. settings.php) know which state to render its
+        // toggle switch in, without needing its own separate localStorage
+        // read -- one source of truth.
+        window.isBloomThemeDark = () => document.documentElement.classList.contains('dark');
 
         // --- Invoice / Void system: Phase 1 data-model helpers ---
 
@@ -228,23 +326,59 @@ if ($user_role === 'delivery') {
             --dark: #121212;
             --text-main: #363949;
             --text-light: #7d8da1;
+
+            /* NEW: neutral tokens the rest of this stylesheet now reads
+               through, instead of hardcoding white/black directly.
+               Light-mode values here match what the page already looked
+               like before -- this is a relabeling, not a redesign. */
+            --surface: #ffffff;
+            --surface-alt: #fafafa;
+            --border-color: #f0f0f0;
+            --text-secondary: #6b7280;
         }
 
-        body { font-family: 'Inter', sans-serif; background-color: var(--background); color: var(--text-main); }
+        /* NEW: dark-mode palette. Deliberately reuses the EXACT hex
+           values auth_page.dart already uses for its dark theme
+           (bgColor/cardColor/textColor/subTextColor/borderColor), so a
+           super-admin who has dark mode on in the app sees the same
+           visual language on the web portal -- not two unrelated "dark
+           modes" that happen to share a name. --primary/--secondary are
+           intentionally NOT overridden here -- the brand amber and
+           purple stay identical in both themes, since the ask was to
+           "keep the yellow areas" as the one constant across light and
+           dark. */
+        html[data-theme="dark"] {
+            --background: #1C1814;
+            --dark: #EAE6DF;
+            --text-main: #EAE6DF;
+            --text-light: #A0998F;
+            --surface: #2A241D;
+            --surface-alt: #221D17;
+            --border-color: #3F382F;
+            --text-secondary: #A0998F;
+        }
+
+        body { font-family: 'Inter', sans-serif; background-color: var(--background); color: var(--text-main); transition: background-color 0.2s ease, color 0.2s ease; }
         h1, h2, h3, .brand-font { font-family: 'Cormorant Garamond', serif; }
         
-        .sidebar { width: 260px; height: 100vh; position: fixed; left: 0; top: 0; background: #fff; box-shadow: 2px 0 10px rgba(0,0,0,0.03); z-index: 100; overflow-y: auto; border-right: 1px solid #f0f0f0; }
+        .sidebar { width: 260px; height: 100vh; position: fixed; left: 0; top: 0; background: var(--surface); box-shadow: 2px 0 10px rgba(0,0,0,0.03); z-index: 100; overflow-y: auto; border-right: 1px solid var(--border-color); }
         .main-content { margin-left: 260px; padding: 20px; }
-        .sidebar-link { display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: #000000; transition: 0.3s; text-decoration: none; font-weight: 600; font-size: 0.85rem; border-radius: 0 50px 50px 0; margin-right: 20px; margin-bottom: 2px; }
+        .sidebar-link { display: flex; align-items: center; gap: 15px; padding: 12px 25px; color: var(--text-main); transition: 0.3s; text-decoration: none; font-weight: 600; font-size: 0.85rem; border-radius: 0 50px 50px 0; margin-right: 20px; margin-bottom: 2px; }
         
-        /* UI FIX: Changed hover text and active background container tint from pink to soft yellow-amber cream */
-        .sidebar-link:hover, .sidebar-link.active { background: rgba(245, 158, 11, 0.05); color: var(--primary); }
-        .sidebar-link.active { border-left: 4px solid var(--primary); background: rgba(245, 158, 11, 0.08); }
+        /* Active/hover tint stays amber-based in BOTH themes on purpose
+           -- this is exactly the "keep the yellow areas" instruction.
+           A low-alpha amber overlay reads correctly against both a
+           white surface and the dark #2A241D surface without needing
+           two separate rules. */
+        .sidebar-link:hover, .sidebar-link.active { background: rgba(245, 158, 11, 0.08); color: var(--primary); }
+        .sidebar-link.active { border-left: 4px solid var(--primary); background: rgba(245, 158, 11, 0.12); }
         .sidebar-link i { font-size: 1.1rem; width: 20px; text-align: center; }
 
-        .card { background: #fff; padding: 24px; border-radius: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; transition: 0.3s; }
+        .card { background: var(--surface); padding: 24px; border-radius: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.02); border: 1px solid var(--border-color); transition: 0.3s; }
         .card:hover { transform: translateY(-4px); box-shadow: 0 15px 30px rgba(0,0,0,0.05); }
 
+        /* --primary/--secondary untouched between themes -- these
+           buttons look identical in light and dark, as intended. */
         .btn-primary { background: var(--primary); color: white; padding: 10px 20px; border-radius: 12px; font-weight: 700; transition: 0.3s; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; }
         .btn-primary:hover { opacity: 0.9; transform: scale(1.02); }
 
@@ -254,21 +388,39 @@ if ($user_role === 'delivery') {
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #eee; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #ddd; }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-light); }
+
+        /* Makes the top-right identity chip look/feel like the clickable
+           "go to my profile" affordance it now is, without touching the
+           surrounding layout at all. */
+        .profile-link { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 12px; border-radius: 14px; padding: 4px 8px; margin: -4px -8px; transition: 0.2s; }
+        .profile-link:hover { background: rgba(245, 158, 11, 0.06); }
+
+        /* NEW: the shared topbar container (branch selector row, bell,
+           profile chip) and the notification dropdown -- both live in
+           header.php's own markup, so they get full dark treatment here
+           directly, same as the sidebar above. Any page-specific card
+           (e.g. a dashboard stat tile) still needs its own `dark:`
+           Tailwind classes added when that page is next touched. */
+        .kiri-topbar, #notif-dropdown { background: var(--surface) !important; border-color: var(--border-color) !important; }
+        #notif-dropdown .border-gray-100 { border-color: var(--border-color) !important; }
+        #notif-dropdown .text-gray-800 { color: var(--text-main) !important; }
+        #notif-dropdown .hover\:bg-gray-50:hover { background: var(--surface-alt) !important; }
+        #branch-selector { background: var(--surface-alt) !important; color: var(--text-main) !important; border-color: var(--border-color) !important; }
     </style>
 </head>
 <body>
 
 <div class="sidebar">
-    <div class="pt-8 px-8 pb-4 text-center border-b border-gray-50 bg-white">
+    <div class="pt-8 px-8 pb-4 text-center border-b border-gray-50 bg-white" style="background: var(--surface); border-color: var(--border-color);">
         <a href="admin.php" class="inline-block no-underline" style="text-decoration: none;">
             <div style="height: 45px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px;">
                 <img src="assets/images/asset.png" alt="BLOOM" style="max-height: 100%; max-width: 100%; object-fit: contain;" onerror="this.src='assets/images/asset.jpg'">
             </div>
             <!-- UI FIX: Realigned typography branding color matrix to brand amber-yellow -->
             <p class="m-0 brand-font text-lg font-black tracking-widest text-[#F59E0B] no-underline" style="text-decoration: none;">BLOOMINOUS</p>
-            <p class="m-0 text-[9px] uppercase tracking-[0.3em] text-gray-400 font-bold no-underline" style="text-decoration: none;">Management System</p>
+            <p class="m-0 text-[9px] uppercase tracking-[0.3em] font-bold no-underline" style="text-decoration: none; color: var(--text-light);">Management System</p>
         </a>
     </div>
 
@@ -313,6 +465,11 @@ if ($user_role === 'delivery') {
         <a href="product_management.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_management.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-box"></i>
             <span>Inventory</span>
+        </a>
+
+        <a href="kiri_generator.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'kiri_generator.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-cube"></i>
+            <span>3D Realism Hub</span>
         </a>
 
         <a href="product_catalog.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_catalog.php' ? 'active' : ''; ?>">
@@ -371,9 +528,9 @@ if ($user_role === 'delivery') {
 </div>
 
 <div class="main-content">
-    <div class="flex justify-end items-center mb-8 bg-white p-4 rounded-2xl shadow-sm">
+    <div class="kiri-topbar flex justify-end items-center mb-8 p-4 rounded-2xl shadow-sm" style="background: var(--surface); border: 1px solid var(--border-color);">
         <div id="notification-bell" class="relative cursor-pointer mr-6">
-            <i class="fa-solid fa-bell text-gray-400 text-xl"></i>
+            <i class="fa-solid fa-bell text-xl" style="color: var(--text-light);"></i>
             <span id="notif-count" class="hidden absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span>
             
             <!-- Notification Dropdown -->
@@ -387,12 +544,12 @@ if ($user_role === 'delivery') {
                 </div>
             </div>
         </div>
-        <div class="flex items-center gap-4 mr-6 border-r pr-6 border-gray-100">
+        <div class="flex items-center gap-4 mr-6 border-r pr-6" style="border-color: var(--border-color);">
             <div class="relative">
-                <select id="branch-selector" onchange="setBranch(this.value)" <?php echo (isset($_SESSION['role']) && $_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'super-admin') ? 'disabled' : ''; ?> class="bg-gray-50 border border-gray-200 text-gray-700 text-[10px] font-black uppercase tracking-widest rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 appearance-none pr-8 cursor-pointer disabled:opacity-50">
+                <select id="branch-selector" onchange="setBranch(this.value)" <?php echo (isset($_SESSION['role']) && $_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'super-admin') ? 'disabled' : ''; ?> class="bg-gray-50 border border-gray-200 text-[10px] font-black uppercase tracking-widest rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 appearance-none pr-8 cursor-pointer disabled:opacity-50">
                     <option value="main_branch">Main Branch</option>
                 </select>
-                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2" style="color: var(--text-light);">
                     <i class="fa-solid fa-chevron-down text-[8px]"></i>
                 </div>
             </div>
@@ -418,10 +575,10 @@ if ($user_role === 'delivery') {
                 });
             </script>
         </div>
-        <div class="flex items-center gap-3 border-l pl-6 border-gray-100">
+        <a href="profile.php" class="profile-link">
             <div class="text-right">
-                <p class="m-0 text-xs font-bold text-gray-800"><?php echo $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'User'; ?></p>
-                <p class="m-0 text-[10px] text-gray-400 uppercase font-bold"><?php 
+                <p class="m-0 text-xs font-bold" style="color: var(--text-main);"><?php echo $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'User'; ?></p>
+                <p class="m-0 text-[10px] uppercase font-bold" style="color: var(--text-light);"><?php 
                     $dispRole = $_SESSION['role'] ?? 'Member';
                     echo str_replace('-', ' ', $dispRole);
                 ?></p>
@@ -430,7 +587,7 @@ if ($user_role === 'delivery') {
             <div class="w-10 h-10 rounded-xl <?php echo ($_SESSION['role'] ?? '') === 'super-admin' ? 'bg-gray-800 text-white' : 'bg-amber-100 text-amber-500'; ?> flex items-center justify-center font-black text-sm">
                 <?php echo strtolower(substr($_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'U', 0, 1)); ?>
             </div>
-        </div>
+        </a>
     </div>
 
     <!-- NOTIFICATION SYSTEM SCRIPT MATRIX INJECTION -->

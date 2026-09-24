@@ -46,6 +46,7 @@ if (!bloom_check_and_record_attempt('login_attempt', $clientIp, 5, 900)) {
         'success' => true,
         'block' => true,
         'reason' => 'Too many login attempts. Please wait about 15 minutes and try again.',
+        'remainingSeconds' => 900 // Added for frontend countdown parity
     ]);
     exit();
 }

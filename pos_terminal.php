@@ -101,6 +101,15 @@ include 'templates/header.php';
         </div>
 
         <div class="px-2 mb-4">
+            <label class="block text-[10px] font-black uppercase text-gray-400 tracking-wider mb-2">Order Type</label>
+            <select id="posOrderType" class="w-full px-3 py-2 text-xs rounded-lg border border-gray-100 outline-none focus:ring-2 focus:ring-indigo-100 font-bold text-gray-700">
+                <option value="walkin">Walk-in Sale</option>
+                <option value="bulk_event">Bulk / Event Order (wedding, corporate, pre-arranged)</option>
+            </select>
+            <p class="text-[10px] text-gray-300 mt-1">Bulk/Event orders skip the big-sale anomaly check — they're expected to be large, so they're not compared against the walk-in average.</p>
+        </div>
+
+        <div class="px-2 mb-4">
             <label class="block text-[10px] font-black uppercase text-gray-400 tracking-wider mb-2">Manual Discount (%)</label>
             <input type="number" id="posDiscountPercent" min="0" max="100" step="1" value="0" placeholder="0" class="w-full px-3 py-2 text-xs rounded-lg border border-gray-100 outline-none focus:ring-2 focus:ring-indigo-100" oninput="renderCart()">
             <p class="text-[10px] text-gray-300 mt-1">Discounts above the authorized threshold will require a justification note or manager PIN.</p>
@@ -380,6 +389,7 @@ include 'templates/header.php';
         const discountPercent = getDiscountPercent();
         const discountAmount = subtotal * (discountPercent / 100);
         const total = subtotal - discountAmount;
+        const orderType = document.getElementById('posOrderType').value; // 'walkin' | 'bulk_event'
 
         if (!confirm('Confirm transaction?')) return;
 
@@ -389,13 +399,23 @@ include 'templates/header.php';
 
         try {
             // --- Sales Anomalies Detection runs BEFORE the sale is written ---
+            // Each check independently decides if it's flagged, and at what
+            // severity. We run them in parallel since they're independent
+            // reads (no shared state). orderType is passed into
+            // checkValueSpike so a tagged Bulk/Event order isn't measured
+            // against the walk-in average at all.
             const checks = await Promise.all([
-                SalesAnomalies.checkValueSpike(window.currentBranch, total),
+                SalesAnomalies.checkValueSpike(window.currentBranch, total, orderType),
                 SalesAnomalies.checkOffHours(),
                 SalesAnomalies.checkDiscount(discountPercent)
             ]);
             const flaggedChecks = checks.filter(c => c.flagged);
-            const severity = SalesAnomalies.worstSeverity(checks);
+            // resolveGateSeverity(), not worstSeverity(): a LONE big-sale
+            // flag with nothing else corroborating it is downgraded from
+            // Critical to Medium — see the comment in sales_anomalies.js
+            // for why a single ambiguous signal shouldn't force a manager
+            // PIN pull on its own.
+            const severity = SalesAnomalies.resolveGateSeverity(checks);
 
             let justificationNote = null;
             let overriddenBy = null;
@@ -404,6 +424,7 @@ include 'templates/header.php';
                 btn.innerText = 'Awaiting review...';
                 const gateResult = await showAnomalyGate(severity, flaggedChecks);
                 if (!gateResult.proceed) {
+                    // Cashier backed out — nothing was written, sale never happened.
                     btn.disabled = false;
                     btn.innerText = 'Process Transaction';
                     return;
@@ -411,7 +432,11 @@ include 'templates/header.php';
                 justificationNote = gateResult.justificationNote;
                 overriddenBy = gateResult.overriddenBy;
             }
+            // severity === 'low' (or null) falls through here with no gate —
+            // Low risk items are logged silently below, matching the spec.
 
+            // Log every triggered flag, regardless of tier, so the dashboard
+            // has a complete picture even for the silent Low-risk ones.
             for (const c of flaggedChecks) {
                 await SalesAnomalies.logAnomaly({
                     type: c.type,
@@ -430,26 +455,29 @@ include 'templates/header.php';
             const typedRecipient = document.getElementById('posRecipientName').value.trim() || typedCustomer;
             const selectedPaymentMethod = document.getElementById('posPaymentMethod').value;
 
+            // Sequential invoice number (INV-2026-0001, ...) — transaction-safe, never collides
             const invoiceId = await window.generateInvoiceId();
 
+            // Create Order in Firestore
             const orderRef = await db.collection('orders').add({
                 order_id: orderId,
                 invoiceId: invoiceId,
                 customer_id: typedCustomer,
                 customer_name: typedCustomer,
-                customerName: typedCustomer,
+                customerName: typedCustomer, // support both formats
                 recipientName: typedRecipient,
                 subtotal: subtotal,
                 discountPercent: discountPercent,
                 discountAmount: discountAmount,
                 total_amount: total,
                 status: 'completed',
-                paymentStatus: 'Paid',
-                payment_method: selectedPaymentMethod,
-                locked: true,
+                paymentStatus: 'Paid', // walk-in sales settle immediately at the register
+                payment_method: selectedPaymentMethod, // FIX: was never recorded for POS sales before
+                orderType: orderType, // 'walkin' | 'bulk_event' — read back by checkValueSpike's baseline query
+                locked: true, // completed invoice — from now on only the Void module may touch it
                 type: 'POS',
                 items: cart,
-                branchId: window.currentBranch,
+                branchId: window.currentBranch, // SAVE BRANCH ID
                 cashierEmail: window.currentUserEmail || null,
                 cashierName: window.currentUserName || null,
                 anomalySeverity: severity || null,
@@ -457,6 +485,7 @@ include 'templates/header.php';
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
+            // Update Stocks in the branch-specific inventory
             for (const item of cart) {
                 const productRef = getBranchPath('inventory').doc(item.id);
                 await db.runTransaction(async (transaction) => {
@@ -465,29 +494,6 @@ include 'templates/header.php';
                     const newStock = (doc.data().stock || 0) - item.qty;
                     transaction.update(productRef, { stock: newStock });
                 });
-            }
-
-            // NEW — logs EVERY completed sale to admin_actions, not just
-            // anomalous ones. Separate from anomaly logging above: this
-            // is a plain accountability record ("cashier X sold ₱Y at
-            // branch Z, invoice #W"), useful for after-the-fact pattern
-            // review even when nothing individually looked wrong at the
-            // time. Best-effort — a logging failure must never roll back
-            // or block a completed sale that's already been written and
-            // whose stock has already been deducted.
-            try {
-                await db.collection('admin_actions').add({
-                    actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
-                    actorEmail: window.currentUserEmail || null,
-                    actorRole: window.currentUserRole || null,
-                    action: 'pos_sale_completed',
-                    targetUid: orderRef.id,
-                    targetEmail: null,
-                    details: `Sold ${cart.length} item(s) for ₱${total.toLocaleString(undefined, {minimumFractionDigits: 2})} at branch ${window.currentBranch} (Invoice ${invoiceId}, ${selectedPaymentMethod}).`,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            } catch (auditError) {
-                console.warn('Sale audit log write failed (sale still completed):', auditError);
             }
 
             // Push notification
@@ -504,6 +510,7 @@ include 'templates/header.php';
             document.getElementById('posCustomerName').value = '';
             document.getElementById('posRecipientName').value = '';
             document.getElementById('posPaymentMethod').value = 'Cash';
+            document.getElementById('posOrderType').value = 'walkin';
             document.getElementById('posDiscountPercent').value = '0';
             clearCart();
         } catch (error) {
