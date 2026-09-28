@@ -504,10 +504,6 @@ if ($user_role === 'delivery') {
             <i class="fa-solid fa-wand-magic-sparkles"></i>
             <span>Freshness Analysis</span>
         </a>
-        <a href="manage_branches.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'manage_branches.php' ? 'active' : ''; ?>">
-            <i class="fa-solid fa-code-branch"></i>
-            <span>Manage Branches</span>
-        </a>
         <a href="promos_discounts.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'promos_discounts.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-tags"></i>
             <span>Promos & Discounts</span>

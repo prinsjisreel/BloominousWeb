@@ -17,13 +17,26 @@ include 'templates/header.php';
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
 <style>
+    /* ============ BOOTSTRAP + DARK MODE ============
+       Bootstrap's own stylesheet (loaded just above) paints <body> with
+       its --bs-body-bg / --bs-body-color variables -- white and dark gray.
+       Because it loads AFTER header.php, it would override the dark page
+       background. In dark mode, point Bootstrap's variables at our theme
+       instead. html[data-theme="dark"] is more specific than Bootstrap's
+       :root, so these values win. Light mode is untouched. */
+    html[data-theme="dark"] {
+        --bs-body-bg: var(--background);
+        --bs-body-color: var(--text-main);
+        --bs-border-color: var(--border-color);
+    }
+
     .freshness-container { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
-    .stat-card { background: #fff; border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 10px; border: 1px solid #f0f0f0; }
+    .stat-card { background: var(--surface); border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-color); }
     .ai-card-premium { background: linear-gradient(135deg, #FCD34D 0%, #F59E0B 55%, #B45309 100%); color: white; border-radius: 35px; padding: 3rem; position: relative; overflow: hidden; }
     .ai-card-premium::before { content: ''; position: absolute; top: -50%; right: -20%; width: 300px; height: 300px; background: rgba(255,255,255,0.1); border-radius: 50%; }
     
-    .table-container { background: white; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
-    .progress-bar-sm { height: 8px; border-radius: 50px; background: #f0f0f0; overflow: hidden; }
+    .table-container { background: var(--surface); border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
+    .progress-bar-sm { height: 8px; border-radius: 50px; background: var(--border-color); overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 50px; transition: 1s cubic-bezier(0.4, 0, 0.2, 1); }
     
     .text-label { font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1px; }
@@ -32,6 +45,20 @@ include 'templates/header.php';
     .healthy { background: rgba(46, 204, 113, 0.1); color: #27ae60; }
     .warning { background: rgba(243, 156, 18, 0.1); color: #f39c12; }
     .critical { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
+
+    /* ============ DARK MODE (page) ============ */
+    html[data-theme="dark"] :is(.stat-card, .table-container) { box-shadow: none; }
+    html[data-theme="dark"] .healthy { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
+    html[data-theme="dark"] .warning { background: rgba(243, 156, 18, 0.15); color: #fcd34d; }
+    html[data-theme="dark"] .freshness-container :is(.shadow-pink-100, .shadow-pink-100\/20, .shadow-sm) { box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page */
+    html[data-theme="dark"] .freshness-container :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .freshness-container :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .freshness-container .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .freshness-container :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
+    html[data-theme="dark"] .freshness-container .bg-gray-50\/30 { background-color: var(--surface-alt); }
+    html[data-theme="dark"] .freshness-container .hover\:bg-gray-50\/50:hover { background-color: var(--surface-alt); }
 </style>
 
 <div class="freshness-container">
@@ -96,7 +123,7 @@ include 'templates/header.php';
             <div class="ai-card-premium shadow-xl shadow-pink-100/20">
                 <i class="fa-solid fa-brain text-5xl mb-6 opacity-30"></i>
                 <h5 class="brand-font text-3xl font-black text-white leading-tight mb-4">AI Cognition Operating</h5>
-                <p class="text-white/80 text-sm font-medium">Monitoring station under command of <strong><?php echo $_SESSION['username'] ?? 'Nexus Admin'; ?></strong>.</p>
+                <p class="text-white/80 text-sm font-medium">Monitoring station under command of <strong><?php echo htmlspecialchars($_SESSION['username'] ?? 'Nexus Admin'); ?></strong>.</p>
                 <div class="mt-8 p-6 bg-white/10 rounded-2xl border border-white/10 backdrop-blur-sm">
                     <p class="text-xs font-bold uppercase tracking-widest text-white/50 mb-2">Protocol 404</p>
                     <p class="text-sm font-medium text-white/90">Stocks falling below <span style="color: #FEF3C7; font-weight: 800;">50% vitality</span> are prioritized for automated clearinghouse discounting.</p>
@@ -183,9 +210,15 @@ include 'templates/header.php';
                 });
             }
 
-            // 4. Log Spoilage as "Salvaged"
+            // 4. Log Spoilage as "Salvaged".
+            // FIX: the Spoilage Log sorts by `created_at` (and names the
+            // product field `product_id`). Firestore's orderBy() silently
+            // SKIPS documents that don't have the sort field at all, so
+            // entries saved only with `createdAt` never appeared in the log.
+            // Both spellings are written so any older reader keeps working.
             const spoilRef = db.collection('branches').doc(bid).collection('spoilage').doc();
             batch.set(spoilRef, {
+                product_id: productDoc.id,
                 productId: productDoc.id,
                 quantity: currentStock,
                 reason: 'Salvaged / Reusable Scraps',
@@ -193,6 +226,7 @@ include 'templates/header.php';
                 loss_amount: 0,
                 reported_by: 'AI System (Recycle)',
                 is_salvaged: true,
+                created_at: firebase.firestore.FieldValue.serverTimestamp(),
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
@@ -264,9 +298,13 @@ include 'templates/header.php';
                 const t = f.scanned_at || f.createdAt;
                 const date = t && typeof t.toDate === 'function' ? t.toDate().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A';
 
+                // FIX: escape apostrophes so names like "Baby's Breath" don't
+                // break the onclick="..." string.
+                const safeName = productName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
                 let recycleBtn = '';
                 if (score < 40) {
-                    recycleBtn = `<button onclick="recycleItem('${productName}', '${f.id}')" class="btn-primary py-1 px-3 text-[9px] bg-green-500 hover:bg-green-600 border-none shadow-sm font-black uppercase">Recycle</button>`;
+                    recycleBtn = `<button onclick="recycleItem('${safeName}', '${f.id}')" class="btn-primary py-1 px-3 text-[9px] bg-green-500 hover:bg-green-600 border-none shadow-sm font-black uppercase">Recycle</button>`;
                 }
 
                 html += `

@@ -12,6 +12,12 @@
  * which denies client `orders` create entirely and already denied client
  * writes to the fraud fields on `customers`.
  *
+ * --- SHARED WEB + APP CONTRACT ---
+ * templates/checkout.php (web) and delivery_details_page.dart /
+ * order_submission_service.dart (app) both POST here. Section 3a keeps the
+ * two platforms consistent: one payment-method vocabulary ('gcash' | 'maya'
+ * | 'cod'), no COD on gift orders, and an optional plain-text `notes` field.
+ *
  * --- RISK TIER MODEL (updated) ---
  * Every check below (device, IP, phone, address, velocity, geo) is now
  * PURELY ADDITIVE — it bumps the score and appends a human-readable flag,
@@ -26,13 +32,27 @@
  * Tiers: Low (0-30) silent log | Medium (31-60) dashboard flag only |
  * High (61-89) logged + watchlisted, order still completes | Critical
  * (90-100) restricted, phone verification required to lift.
+ *
+ * --- REST MIGRATION (no gRPC) ---
+ * Every Firestore call in this file now goes through the plain REST helpers
+ * (includes/firestore_rest.php + firebase_admin.php's *_rest functions)
+ * instead of bloom_firestore(). The gRPC FirestoreClient crashes PHP on the
+ * local XAMPP install (browser sees ERR_CONNECTION_RESET), so this is the
+ * same fix set_session.php and rate_limiter.php already received. The
+ * fraud logic itself is unchanged.
  */
 
-require_once __DIR__ . '/includes/firebase_admin.php';
+require_once __DIR__ . '/includes/firestore_rest.php';
 require_once __DIR__ . '/includes/abstractapi_ip_client.php';
 require_once __DIR__ . '/includes/abstractapi_phone_client.php';
 
-use Google\Cloud\Firestore\FieldValue;
+// Safety net: any uncaught error (Firestore/network hiccup) still answers
+// with JSON, so checkout.php shows a clear message instead of a blank
+// 500 page or "Failed to fetch".
+set_exception_handler(function (\Throwable $e) {
+    error_log('submit_order.php failed: ' . $e->getMessage());
+    bloom_json_response(['success' => false, 'message' => 'We could not place your order right now. Please try again.'], 500);
+});
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     bloom_json_response(['success' => false, 'message' => 'Method not allowed'], 405);
@@ -58,16 +78,11 @@ if (isset($body['user_id']) && $body['user_id'] !== $uid) {
     bloom_json_response(['success' => false, 'message' => 'User mismatch'], 403);
 }
 
-$db = bloom_firestore();
+$customer = bloom_firestore_get_document_rest('customers', $uid);
 
-$customerRef = $db->collection('customers')->document($uid);
-$customerSnap = $customerRef->snapshot();
-
-if (!$customerSnap->exists()) {
+if ($customer === null) {
     bloom_json_response(['success' => false, 'message' => 'Customer profile not found'], 404);
 }
-
-$customer = $customerSnap->data();
 
 if (($customer['status'] ?? null) === 'blocked') {
     bloom_json_response(['success' => false, 'message' => 'This account has been blocked.'], 403);
@@ -155,6 +170,33 @@ $customerLat = isset($body['customerLat']) && $body['customerLat'] !== '' ? (flo
 $customerLng = isset($body['customerLng']) && $body['customerLng'] !== '' ? (float) $body['customerLng'] : null;
 $normalizedPhone = preg_replace('/[^0-9+]/', '', $body['phone']);
 
+// --- 3a. Shared web + app contract ---
+// One payment-method vocabulary for both platforms. Older spellings are
+// mapped onto it ('COD' from the previous web checkout, 'paymaya' from
+// PayMongo's own naming) so every stored order uses the same three values.
+$paymentAliases = [
+    'gcash' => 'gcash',
+    'maya' => 'maya',
+    'paymaya' => 'maya',
+    'cod' => 'cod',
+];
+$rawPaymentMethod = strtolower(trim((string) $body['paymentMethod']));
+if (!isset($paymentAliases[$rawPaymentMethod])) {
+    bloom_json_response(['success' => false, 'message' => 'Unsupported payment method. Please choose GCash, Maya, or Cash on Delivery.'], 400);
+}
+$paymentMethod = $paymentAliases[$rawPaymentMethod];
+
+// Same rule both checkouts show in their UI — enforced here so a modified
+// client can't skip it.
+if ($isGift && $paymentMethod === 'cod') {
+    bloom_json_response(['success' => false, 'message' => 'Cash on Delivery isn\'t available for gift orders. Please choose GCash or Maya.'], 400);
+}
+
+// Optional delivery instructions ("Order Notes" on web and app). Plain text
+// only, trimmed, and capped so nobody can stuff a huge blob into an order.
+$notes = trim(strip_tags((string) ($body['notes'] ?? '')));
+$notes = function_exists('mb_substr') ? mb_substr($notes, 0, 500) : substr($notes, 0, 500);
+
 // Server-captured only — never trust an IP the client claims in the body.
 // X-Forwarded-For may hold a chain (client, proxy1, proxy2...); the first
 // entry is the original client IF your reverse proxy is trusted/configured
@@ -175,8 +217,8 @@ $hasHardEvidence = false; // true only for PROOF (banned device), never for a su
 $triggerAutoRestriction = false;
 
 if ($deviceHash !== null) {
-    $bannedDeviceSnap = $db->collection('banned_devices')->document($deviceHash)->snapshot();
-    if ($bannedDeviceSnap->exists()) {
+    $bannedDevice = bloom_firestore_get_document_rest('banned_devices', $deviceHash);
+    if ($bannedDevice !== null) {
         $orderRiskScore += 90;
         $customerScoreBump += 90;
         $localFraudFlags[] = 'Order placed from a previously banned device';
@@ -245,10 +287,9 @@ try {
 }
 
 try {
-    $phoneReuseQuery = $db->collection('orders')->where('phone', '=', $normalizedPhone)->documents();
-    foreach ($phoneReuseQuery as $reuseDoc) {
-        if (!$reuseDoc->exists()) continue;
-        $reuseData = $reuseDoc->data();
+    $phoneReuseRows = bloom_firestore_query_rest('orders', 'phone', $normalizedPhone);
+    foreach ($phoneReuseRows as $reuseRow) {
+        $reuseData = $reuseRow['data'];
         if (($reuseData['user_id'] ?? null) !== $uid) {
             $orderRiskScore += 25;
             $customerScoreBump += 25;
@@ -271,14 +312,14 @@ try {
 // trivial formatting differences (extra spaces) don't cause a false
 // "different address" miss — not a full address-parsing solution, just
 // enough to catch the common case of someone reusing the literal same
-// text across accounts.
+// text across accounts. Web and app now build the address string in the
+// SAME format, so this check also matches across the two platforms.
 $normalizedAddress = strtolower(trim(preg_replace('/\s+/', ' ', (string) $body['address'])));
 
 try {
-    $addressReuseQuery = $db->collection('orders')->where('normalizedAddress', '=', $normalizedAddress)->documents();
-    foreach ($addressReuseQuery as $reuseDoc) {
-        if (!$reuseDoc->exists()) continue;
-        $reuseData = $reuseDoc->data();
+    $addressReuseRows = bloom_firestore_query_rest('orders', 'normalizedAddress', $normalizedAddress);
+    foreach ($addressReuseRows as $reuseRow) {
+        $reuseData = $reuseRow['data'];
         if (($reuseData['user_id'] ?? null) !== $uid) {
             $orderRiskScore += 20;
             $customerScoreBump += 20;
@@ -300,16 +341,17 @@ try {
 // louder the more it repeats, but it can no longer restrict anyone by
 // itself — see section 6.
 $fiveMinAgo = new DateTimeImmutable('-5 minutes');
-$ordersQuery = $db->collection('orders')->where('user_id', '=', $uid)->documents();
+$pastOrderRows = bloom_firestore_query_rest('orders', 'user_id', $uid);
 
 $recentOrderCount = 0; // how many PAST orders fall inside the 5-minute window
 $orderCount = 0;       // total past orders (any time) — used for isFirstOrder below
-foreach ($ordersQuery as $orderDoc) {
-    if (!$orderDoc->exists()) continue;
+foreach ($pastOrderRows as $orderRow) {
     $orderCount++;
-    $oData = $orderDoc->data();
+    $oData = $orderRow['data'];
+    // REST decodes Firestore timestamps into DateTimeImmutable objects,
+    // which can be compared directly with >=.
     $ts = $oData['createdAt'] ?? $oData['timestamp'] ?? null;
-    if ($ts instanceof \Google\Cloud\Core\Timestamp && $ts->get() >= $fiveMinAgo) {
+    if ($ts instanceof \DateTimeInterface && $ts >= $fiveMinAgo) {
         $recentOrderCount++;
     }
 }
@@ -342,9 +384,8 @@ function bloom_haversine_km(float $lat1, float $lon1, float $lat2, float $lon2):
 }
 
 if (!$isGift && $customerLat !== null && $customerLng !== null) {
-    $branchSnap = $db->collection('branches')->document($branchId)->snapshot();
-    if ($branchSnap->exists()) {
-        $branchData = $branchSnap->data();
+    $branchData = bloom_firestore_get_document_rest('branches', $branchId);
+    if ($branchData !== null) {
         $branchLat = $branchData['latitude'] ?? null;
         $branchLng = $branchData['longitude'] ?? null;
         if (is_numeric($branchLat) && is_numeric($branchLng)) {
@@ -452,24 +493,23 @@ if ($ultimateScore >= 100) {
 }
 
 if (!empty($localFraudFlags)) {
-    $customerUpdate['fraudFlags'] = FieldValue::arrayUnion($localFraudFlags);
+    // REST has no arrayUnion(), so we do the same thing by hand: existing
+    // flags + new flags, duplicates removed, re-indexed as a clean list.
+    $existingFlags = is_array($customer['fraudFlags'] ?? null) ? array_values($customer['fraudFlags']) : [];
+    $customerUpdate['fraudFlags'] = array_values(array_unique(array_merge($existingFlags, $localFraudFlags)));
 }
 
-$customerRef->update(array_map(
-    fn($key, $value) => ['path' => $key, 'value' => $value],
-    array_keys($customerUpdate),
-    array_values($customerUpdate)
-));
+bloom_firestore_update_fields_rest('customers', $uid, $customerUpdate);
 
 if ($triggerAutoRestriction) {
-    $db->collection('notifications')->add([
+    bloom_firestore_add_document_rest('notifications', [
         'title' => 'Fraud Alert - Account Restricted',
         'message' => $hasHardEvidence
             ? "Account [$uid] was restricted: order placed from a previously banned device."
             : "Account [$uid] was restricted: multiple risk signals converged to a Critical score.",
         'type' => 'fraud',
         'branchId' => $branchId,
-        'created_at' => FieldValue::serverTimestamp(),
+        'created_at' => bloom_rest_now(),
         'read' => false,
     ]);
 
@@ -481,49 +521,49 @@ if ($triggerAutoRestriction) {
 }
 
 if ($checkAutoBan) {
-    $customerRef->update([['path' => 'status', 'value' => 'blocked']]);
+    bloom_firestore_update_fields_rest('customers', $uid, ['status' => 'blocked']);
     $email = $body['email'] ?? null;
     if ($email) {
-        $db->collection('blocked_emails')->document(strtolower($email))->set([
+        bloom_firestore_set_document_rest('blocked_emails', strtolower($email), [
             'blockedUid' => $uid,
             'reason' => 'Automated mitigation framework lockout: Terminal limit reached.',
-            'blockedAt' => FieldValue::serverTimestamp(),
+            'blockedAt' => bloom_rest_now(),
         ]);
     }
     if ($deviceHash !== null) {
-        $db->collection('banned_devices')->document($deviceHash)->set([
+        bloom_firestore_set_document_rest('banned_devices', $deviceHash, [
             'bannedUid' => $uid,
             'reason' => 'Automated mitigation framework lockout: Terminal limit reached.',
-            'bannedAt' => FieldValue::serverTimestamp(),
+            'bannedAt' => bloom_rest_now(),
         ]);
     }
-    $db->collection('notifications')->add([
+    bloom_firestore_add_document_rest('notifications', [
         'title' => 'Security Alert - Account Blocked',
         'message' => "Account associated with {$body['name']} reached peak fraud limits and has been blacklisted.",
         'type' => 'warning',
         'branchId' => $branchId,
-        'created_at' => FieldValue::serverTimestamp(),
+        'created_at' => bloom_rest_now(),
         'read' => false,
     ]);
     bloom_json_response(['success' => false, 'code' => 'BLOCKED', 'message' => 'This account has been blocked.'], 403);
 }
 
 // --- 7. Sequential invoice number, transaction-safe (ports header.php's JS logic) ---
-$invoiceId = $db->runTransaction(function ($transaction) use ($db) {
-    $counterRef = $db->collection('counters')->document('invoices');
-    $counterSnap = $transaction->snapshot($counterRef);
+$invoiceId = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) {
     $year = (int) date('Y');
-    $data = $counterSnap->exists() ? $counterSnap->data() : [];
-    $nextNumber = (($data['year'] ?? null) === $year ? ($data['current'] ?? 0) : 0) + 1;
+    $data = $tx->get('counters', 'invoices') ?? [];
+    $nextNumber = ((int) ($data['year'] ?? 0) === $year ? (int) ($data['current'] ?? 0) : 0) + 1;
     $id = sprintf('INV-%d-%04d', $year, $nextNumber);
-    $transaction->set($counterRef, ['current' => $nextNumber, 'year' => $year], ['merge' => true]);
+    $tx->set('counters', 'invoices', ['current' => $nextNumber, 'year' => $year], true);
     return $id;
 });
 
 // --- 8. Create the order (server-computed fraud fields only) ---
 $finalTotal = $subtotal + $shippingFee;
 
-$orderRef = $db->collection('orders')->add([
+$now = bloom_rest_now();
+
+$orderId = bloom_firestore_add_document_rest('orders', [
     'user_id' => $uid,
     'invoiceId' => $invoiceId,
     'customer_name' => $body['name'],
@@ -534,7 +574,8 @@ $orderRef = $db->collection('orders')->add([
     'address' => $body['address'],
     'normalizedAddress' => $normalizedAddress,
     'phone' => $normalizedPhone,
-    'payment_method' => $body['paymentMethod'],
+    'payment_method' => $paymentMethod,
+    'notes' => $notes,
     'items' => $items,
     'subtotal' => $subtotal,
     'shipping_fee' => $shippingFee,
@@ -550,21 +591,21 @@ $orderRef = $db->collection('orders')->add([
     'riskTier' => $riskTier, // the account's tier immediately after this order — powers the Fraud Analytics click-through history
     'requestIp' => $requestIp,
     'deviceHash' => $deviceHash,
-    'timestamp' => FieldValue::serverTimestamp(),
-    'createdAt' => FieldValue::serverTimestamp(),
+    'timestamp' => $now,
+    'createdAt' => $now,
 ]);
 
-$db->collection('notifications')->add([
+bloom_firestore_add_document_rest('notifications', [
     'title' => 'New Web Order Placed',
     'message' => "Order {$invoiceId} valued at P" . number_format($finalTotal, 2) . " received from {$body['name']}.",
     'type' => 'sale',
     'branchId' => $branchId,
-    'created_at' => FieldValue::serverTimestamp(),
+    'created_at' => $now,
     'read' => false,
 ]);
 
 bloom_json_response([
     'success' => true,
-    'orderId' => $orderRef->id(),
+    'orderId' => $orderId,
     'invoiceId' => $invoiceId,
 ]);

@@ -28,14 +28,14 @@ include 'templates/header.php';
     }
     
     .stat-card { 
-        background: #fff; 
+        background: var(--surface); 
         padding: 2.5rem; 
         border-radius: 30px; 
         box-shadow: 0 10px 30px rgba(0,0,0,0.02); 
         display: flex; 
         align-items: center; 
         gap: 25px;
-        border: 1px solid #f0f0f0;
+        border: 1px solid var(--border-color);
     }
     
     .stat-card .icon-box {
@@ -57,11 +57,11 @@ include 'templates/header.php';
     .label-text { color: var(--text-light); font-size: 0.7rem; text-transform: uppercase; font-weight: 800; margin-bottom: 8px; letter-spacing: 1px; }
 
     .chart-card { 
-        background: #fff; 
+        background: var(--surface); 
         border-radius: 35px; 
         padding: 3rem; 
         box-shadow: 0 10px 30px rgba(0,0,0,0.02); 
-        border: 1px solid #f0f0f0;
+        border: 1px solid var(--border-color);
     }
 
     .btn-terminal {
@@ -85,6 +85,17 @@ include 'templates/header.php';
         transform: translateY(-2px);
         box-shadow: 0 15px 30px rgba(233, 30, 99, 0.25);
     }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>.
+       (The chart itself is themed from JavaScript below -- a <canvas>
+       is a drawn picture, so CSS can't recolor what's inside it.) */
+    html[data-theme="dark"] :is(.stat-card, .chart-card) { box-shadow: none; }
+    html[data-theme="dark"] .pos-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .pos-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .pos-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .pos-content :is(.bg-gray-50, .bg-gray-100) { background-color: var(--surface-alt); }
+    html[data-theme="dark"] .pos-content :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
 </style>
 
 <main class="pos-content">
@@ -152,9 +163,26 @@ include 'templates/header.php';
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // Reads a color from header.php's theme variables (e.g. '--surface'),
+    // so the chart can use the SAME colors as the rest of the page.
+    // Chart.js paints onto a <canvas>, which CSS rules can't reach --
+    // the colors have to be handed to it as plain values.
+    function themeColor(varName, fallback) {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        return value || fallback;
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const ctx = document.getElementById('salesTrendChart').getContext('2d');
         let chart;
+
+        // Resolved once per page load; toggling the theme reloads the
+        // page (see window.setBloomTheme in header.php), so these are
+        // always current.
+        const isDark = window.isBloomThemeDark ? window.isBloomThemeDark() : false;
+        const gridColor = isDark ? themeColor('--border-color', '#3F382F') : '#f8f8f8';
+        const tickColor = isDark ? themeColor('--text-light', '#A0998F') : '#aaa';
+        const pointFill = themeColor('--surface', '#ffffff');
 
         // Real-time listener for sales analytics
         db.collection('orders').where('branchId', '==', window.currentBranch).onSnapshot(snap => {
@@ -227,7 +255,7 @@ include 'templates/header.php';
                         borderWidth: 4,
                         fill: true,
                         tension: 0.4,
-                        pointBackgroundColor: '#fff',
+                        pointBackgroundColor: pointFill,
                         pointBorderColor: '#E91E63',
                         pointBorderWidth: 3,
                         pointRadius: 6,
@@ -256,10 +284,10 @@ include 'templates/header.php';
                     scales: {
                         y: { 
                             beginAtZero: true, 
-                            grid: { color: '#f8f8f8', drawBorder: false },
+                            grid: { color: gridColor, drawBorder: false },
                             ticks: {
                                 font: { family: 'Inter', size: 10, weight: '700' },
-                                color: '#aaa',
+                                color: tickColor,
                                 callback: function(value) {
                                     return '₱' + value.toLocaleString();
                                 }
@@ -269,7 +297,7 @@ include 'templates/header.php';
                             grid: { display: false },
                             ticks: {
                                 font: { family: 'Inter', size: 10, weight: '700' },
-                                color: '#aaa'
+                                color: tickColor
                             }
                         }
                     }

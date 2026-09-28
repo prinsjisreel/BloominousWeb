@@ -31,13 +31,13 @@ include 'templates/header.php';
     .manage-content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
     .page-header { margin-bottom: 3.5rem; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
          
-    label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px; }
-    input, select { width: 100%; padding: 15px 18px; border: 1px solid #f0f0f0; border-radius: 15px; outline: none; font-size: 0.9rem; background: #fafafa; transition: 0.3s; font-weight: 600; }
-    input:focus, select:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 15px rgba(233, 30, 99, 0.05); }
+    .manage-content label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px; }
+    .manage-content input, .manage-content select { width: 100%; padding: 15px 18px; border: 1px solid var(--border-color); border-radius: 15px; outline: none; font-size: 0.9rem; background: var(--surface-alt); color: var(--text-main); transition: 0.3s; font-weight: 600; }
+    .manage-content input:focus, .manage-content select:focus { border-color: var(--primary); background: var(--surface); box-shadow: 0 0 15px rgba(233, 30, 99, 0.05); }
          
-    table { width: 100%; border-collapse: collapse; }
-    th { text-align: left; padding: 25px 20px; color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; border-bottom: 1px solid #f0f0f0; letter-spacing: 1px; background: #fafafa; }
-    td { padding: 20px; border-bottom: 1px solid #f8f9fa; font-size: 0.9rem; color: var(--text-main); font-weight: 500; }
+    .manage-content table { width: 100%; border-collapse: collapse; }
+    .manage-content th { text-align: left; padding: 25px 20px; color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; border-bottom: 1px solid var(--border-color); letter-spacing: 1px; background: var(--surface-alt); }
+    .manage-content td { padding: 20px; border-bottom: 1px solid #f8f9fa; font-size: 0.9rem; color: var(--text-main); font-weight: 500; }
          
     .badge { padding: 6px 16px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
     .badge-super-admin { background: #000; color: #fff; }
@@ -46,6 +46,8 @@ include 'templates/header.php';
     .badge-delivery { background: rgba(255, 177, 66, 0.1); color: #f39c12; }
          
     .alert { padding: 18px 24px; border-radius: 20px; margin-bottom: 30px; font-weight: 800; font-size: 0.8rem; display: none; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+    .alert-success { background: rgba(46, 204, 113, 0.1); color: #27ae60; }
+    .alert-error { background: #fff5f8; color: var(--primary); }
     .delete-btn { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: #fff5f8; color: var(--primary); transition: 0.3s; border: none; cursor: pointer; }
     .delete-btn:hover { background: var(--primary); color: white; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(233, 30, 99, 0.15); }
     .form-section-title { font-family: 'Cormorant Garamond', serif; font-size: 1.8rem; font-weight: 900; color: var(--text-main); border-bottom: 3px solid var(--primary); display: inline-block; padding-bottom: 8px; margin-bottom: 30px; }
@@ -53,6 +55,24 @@ include 'templates/header.php';
     .migrate-btn:hover { background: var(--secondary); color: white; }
     .migrate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .locked-note { font-size: 0.85rem; line-height: 1.6; color: var(--text-light); font-weight: 500; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] .manage-content td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .manage-content :is(input, select) { color-scheme: dark; }
+    /* A solid black pill vanishes on a dark page -- invert it instead */
+    html[data-theme="dark"] .badge-super-admin { background: var(--text-main); color: var(--background); }
+    html[data-theme="dark"] .badge-admin { background: rgba(233, 30, 99, 0.18); }
+    html[data-theme="dark"] .alert-success { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
+    html[data-theme="dark"] .alert-error { background: rgba(233, 30, 99, 0.15); color: #f9a8d4; }
+    html[data-theme="dark"] .delete-btn { background: rgba(233, 30, 99, 0.15); }
+    html[data-theme="dark"] .delete-btn:hover { background: var(--primary); box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page */
+    html[data-theme="dark"] .manage-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .manage-content :is(.text-gray-500, .text-gray-400, .text-gray-300, .text-muted) { color: var(--text-light); }
+    html[data-theme="dark"] .manage-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .manage-content :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
 </style>
 
 <main class="manage-content">
@@ -73,8 +93,8 @@ include 'templates/header.php';
         <?php endif; ?>
     </div>
 
-    <div id="success-alert" class="alert" style="background: rgba(46, 204, 113, 0.1); color: #27ae60;"></div>
-    <div id="error-alert" class="alert" style="background: #fff5f8; color: var(--primary);"></div>
+    <div id="success-alert" class="alert alert-success"></div>
+    <div id="error-alert" class="alert alert-error"></div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- ADD ACCOUNT FORM (super-admin only, Option B) -->
@@ -192,7 +212,7 @@ include 'templates/header.php';
                 branchMap[doc.id] = bName;
                 options += `<option value="${doc.id}">${bName}</option>`;
             });
-            // The branch <select> only exists for super-admins now.
+            // The branch <select> only exists for super-admins.
             if (accBranchSelect) {
                 accBranchSelect.innerHTML = options;
             }
@@ -473,7 +493,7 @@ include 'templates/header.php';
         if (e) {
             e.innerText = msg;
             e.style.display = 'block';
-            // Errors stay longer (8s) since they now carry step details worth reading.
+            // Errors stay longer (8s) since they carry step details worth reading.
             setTimeout(() => e.style.display = 'none', 8000);
         }
     }

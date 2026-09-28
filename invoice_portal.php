@@ -24,9 +24,9 @@ include 'templates/header.php';
 
 <style>
     .portal-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
-    .list-card { background: #fff; border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
+    .list-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
     #invoiceTable { width: 100%; border-collapse: collapse; }
-    #invoiceTable th { text-align: left; padding: 22px 20px; color: var(--text-light); border-bottom: 1px solid #f0f0f0; text-transform: uppercase; font-size: 0.72rem; font-weight: 800; letter-spacing: 1px; background: #fafafa; }
+    #invoiceTable th { text-align: left; padding: 22px 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color); text-transform: uppercase; font-size: 0.72rem; font-weight: 800; letter-spacing: 1px; background: var(--surface-alt); }
     #invoiceTable td { padding: 18px 20px; border-bottom: 1px solid #f8f9fa; color: var(--text-main); font-size: 0.88rem; font-weight: 500; }
 
     .badge { padding: 6px 16px; border-radius: 50px; font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; display: inline-block; }
@@ -37,10 +37,26 @@ include 'templates/header.php';
     .badge-channel-web { background: rgba(245, 158, 11, 0.12); color: var(--primary); }
 
     .row-actions { display: flex; gap: 8px; }
-    .row-actions a { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid #f0f0f0; background: #fafafa; color: var(--text-light); transition: 0.2s; }
+    .row-actions a { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-light); transition: 0.2s; }
     .row-actions a:hover { border-color: var(--primary); color: var(--primary); }
 
-    .filter-select { padding: 12px 16px; border-radius: 14px; border: 1px solid #f0f0f0; background: #fff; font-weight: 700; font-size: 0.82rem; outline: none; cursor: pointer; }
+    .filter-select { padding: 12px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface); color: var(--text-main); font-weight: 700; font-size: 0.82rem; outline: none; cursor: pointer; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+
+    /* 1) Page colors with no exact theme-variable match */
+    html[data-theme="dark"] #invoiceTable td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .badge-pending { background: rgba(243, 156, 18, 0.15); color: #fbbf24; }
+    html[data-theme="dark"] :is(.badge-voided, .badge-refunded, .badge-partially-refunded) { background: var(--surface-alt); color: var(--text-light); }
+    html[data-theme="dark"] .filter-select { color-scheme: dark; }
+    html[data-theme="dark"] .list-card { box-shadow: none; }
+
+    /* 2) Tailwind class remap, scoped to this page's content */
+    html[data-theme="dark"] .portal-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .portal-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .portal-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .portal-content :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
 </style>
 
 <main class="portal-content">

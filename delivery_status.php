@@ -27,12 +27,12 @@ include 'templates/header.php';
     
     .header-area { margin-bottom: 3.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; }
     
-    .table-card { background: #fff; border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
+    .table-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
 
     table { width: 100%; border-collapse: collapse; }
-    th { color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; padding: 25px 20px; border-bottom: 1px solid #f0f0f0; text-align: left; letter-spacing: 1px; background: #fafafa; }
+    th { color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; padding: 25px 20px; border-bottom: 1px solid var(--border-color); text-align: left; letter-spacing: 1px; background: var(--surface-alt); }
     td { padding: 20px; color: var(--text-main); font-size: 0.9rem; border-bottom: 1px solid #f8f9fa; transition: 0.2s; font-weight: 500; }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--surface-alt); }
 
     .badge { padding: 6px 16px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
     .badge-pending { background: #fff9e6; color: #ffbb55; }
@@ -40,17 +40,35 @@ include 'templates/header.php';
     .badge-confirmed { background: rgba(46, 204, 113, 0.1); color: #2ecc71; }
 
     .order-id { font-family: 'Inter', sans-serif; font-weight: 900; color: var(--primary); font-size: 0.85rem; letter-spacing: 0.5px; }
+    .order-date { color: #7d8da1; }
 
     .no-pod { color: #ccc; font-size: 0.78rem; font-weight: 700; font-style: italic; }
-    .pod-thumb-btn { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; cursor: pointer; border: 1px solid #f0f0f0; transition: 0.2s; }
+    .pod-thumb-btn { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; cursor: pointer; border: 1px solid var(--border-color); transition: 0.2s; }
     .pod-thumb-btn:hover { transform: scale(1.08); border-color: var(--primary); }
 
     #podViewOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.75); z-index: 600; align-items: center; justify-content: center; padding: 20px; }
     #podViewOverlay.open { display: flex; }
-    #podViewCard { background: #fff; border-radius: 24px; padding: 1.5rem; max-width: 420px; width: 100%; text-align: center; }
+    #podViewCard { background: var(--surface); border-radius: 24px; padding: 1.5rem; max-width: 420px; width: 100%; text-align: center; }
     #podViewCard img { width: 100%; border-radius: 16px; margin-bottom: 1rem; }
     #podViewMeta { font-size: 0.8rem; color: var(--text-light); font-weight: 600; margin-bottom: 1rem; }
     #podViewCard button { width: 100%; padding: 12px; border-radius: 14px; border: none; background: #f5f5f5; color: var(--text-light); font-weight: 800; cursor: pointer; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] .delivery-content td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .table-card { box-shadow: none; }
+    html[data-theme="dark"] .badge-pending { background: rgba(255, 187, 85, 0.15); color: #fcd34d; }
+    html[data-theme="dark"] .badge-confirmed { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
+    html[data-theme="dark"] .order-date,
+    html[data-theme="dark"] .no-pod { color: var(--text-light); }
+    html[data-theme="dark"] #podViewCard button { background: var(--surface-alt); }
+
+    /* Tailwind / utility class remap, scoped to this page */
+    html[data-theme="dark"] .delivery-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .delivery-content :is(.text-gray-500, .text-gray-400, .text-gray-300, .text-muted) { color: var(--text-light); }
+    html[data-theme="dark"] .delivery-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .delivery-content :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
+    html[data-theme="dark"] .delivery-content .shadow-sm { box-shadow: none; }
 </style>
 
 <main class="delivery-content">
@@ -146,7 +164,7 @@ include 'templates/header.php';
                 <tr>
                     <td><span class="order-id">#${id.substring(0, 8).toUpperCase()}</span></td>
                     <td style="font-weight: 600;">${customerName}</td>
-                    <td style="color: #7d8da1;">${date}</td>
+                    <td class="order-date">${date}</td>
                     <td><span class="badge ${badgeClass}">${displayStatus}</span></td>
                     <td>${podCell}</td>
                 </tr>

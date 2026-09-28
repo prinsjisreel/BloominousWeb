@@ -2,7 +2,9 @@
 /**
  * BLOOMINOUS - Product Management (Firebase Spoke)
  */
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Security Check
 if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])) {
@@ -18,11 +20,11 @@ include 'templates/header.php';
 
 <style>
     .main-content-area { padding: 1.5rem; margin: 0 auto; max-width: 1400px; }
-    .inventory-card { background: white; border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; }
+    .inventory-card { background: var(--surface); border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); }
     .header-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; }
     
     table { width: 100%; border-collapse: collapse; }
-    table th { text-align: left; padding: 18px; color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; border-bottom: 1px solid #f0f0f0; font-weight: 800; letter-spacing: 1px; }
+    table th { text-align: left; padding: 18px; color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; border-bottom: 1px solid var(--border-color); font-weight: 800; letter-spacing: 1px; }
     table td { padding: 18px; border-bottom: 1px solid #f8f9fa; color: var(--text-main); font-size: 0.9rem; font-weight: 500; }
     
     .product-img { width: 50px; height: 50px; border-radius: 15px; object-fit: cover; box-shadow: 0 5px 10px rgba(0,0,0,0.05); }
@@ -38,6 +40,24 @@ include 'templates/header.php';
     .archive-icon:hover { background: #2980b9; color: white; transform: translateY(-2px); }
     .spoil-icon { background: rgba(255, 177, 66, 0.1); color: #f39c12; }
     .spoil-icon:hover { background: #f39c12; color: white; transform: translateY(-2px); }
+
+    /* Barcodes are drawn by JsBarcode as black bars on a white
+       rectangle. Rounded corners make that white rectangle read as an
+       intentional "label" on any background. */
+    .barcode { border-radius: 6px; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] table td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .inventory-card { box-shadow: none; }
+    /* Brighter archive-icon blue so it stays readable on dark */
+    html[data-theme="dark"] .archive-icon { background: rgba(52, 152, 219, 0.15); color: #7cc4f5; }
+    /* The pink glow under "Catalog Item" looks like a smudge on dark */
+    html[data-theme="dark"] .main-content-area .shadow-pink-100 { box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page's content */
+    html[data-theme="dark"] .main-content-area :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .main-content-area :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
 </style>
 
 <div class="main-content-area">
@@ -113,7 +133,7 @@ include 'templates/header.php';
                         <div style="font-weight: 700; color: var(--text-main); font-size: 0.95rem;">${data.name || 'Unnamed'}</div>
                     </td>
                     <td>
-                        <svg id="barcode-${id}"></svg>
+                        <svg id="barcode-${id}" class="barcode"></svg>
                     </td>
                     <td><span style="font-size: 0.8rem; font-weight: 600; color: var(--text-light);">${data.category || 'Standard'}</span></td>
                     <td style="font-weight: 800; color: var(--primary);">₱${parseFloat(data.price || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
@@ -130,7 +150,9 @@ include 'templates/header.php';
 
             productList.innerHTML = html;
 
-            // Generate Barcodes
+            // Generate Barcodes. background/lineColor are set explicitly
+            // (they're JsBarcode's defaults) so the "always black on white,
+            // in both themes" choice is visible right here in the code.
             setTimeout(() => {
                 snap.forEach(doc => {
                     const data = doc.data();
@@ -140,7 +162,10 @@ include 'templates/header.php';
                                 format: "CODE128",
                                 height: 20,
                                 width: 1,
-                                displayValue: false
+                                displayValue: false,
+                                background: "#ffffff",
+                                lineColor: "#000000",
+                                margin: 6
                             });
                         } catch (e) {}
                     }

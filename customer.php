@@ -18,29 +18,44 @@ include 'templates/header.php';
 <style>
     .customer-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2.5rem; }
-    .stat-card { background: #fff; padding: 2rem; border-radius: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid #f0f0f0; }
+    .stat-card { background: var(--surface); padding: 2rem; border-radius: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-color); }
     .stat-card i { font-size: 1.5rem; width: 60px; height: 60px; border-radius: 18px; display: flex; align-items: center; justify-content: center; }
     .pink-bg { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
     .indigo-bg { background: rgba(123, 121, 242, 0.1); color: var(--secondary); }
     .teal-bg { background: rgba(0, 206, 209, 0.1); color: #00ced1; }
     
-    .form-card { background: #fff; padding: 2rem; border-radius: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: none; margin-bottom: 2rem; border: 1px solid var(--primary); border-style: dashed; }
+    .form-card { background: var(--surface); padding: 2rem; border-radius: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: none; margin-bottom: 2rem; border: 1px solid var(--primary); border-style: dashed; }
     .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
     
     label { font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 8px; display: block; letter-spacing: 1px; }
-    input, select { width: 100%; padding: 12px 15px; border: 1px solid #eee; border-radius: 12px; outline: none; font-size: 0.9rem; background: #fafafa; transition: 0.3s; font-weight: 500; }
-    input:focus { border-color: var(--primary); background: #fff; }
+    input, select { width: 100%; padding: 12px 15px; border: 1px solid #eee; border-radius: 12px; outline: none; font-size: 0.9rem; background: var(--surface-alt); color: var(--text-main); transition: 0.3s; font-weight: 500; }
+    input:focus { border-color: var(--primary); background: var(--surface); }
 
-    .list-card { background: #fff; border-radius: 30px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
+    .list-card { background: var(--surface); border-radius: 30px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
     #customerTable { width: 100%; border-collapse: collapse; }
-    #customerTable th { text-align: left; padding: 20px; color: var(--text-light); border-bottom: 1px solid #f0f0f0; text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; }
+    #customerTable th { text-align: left; padding: 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; }
     #customerTable td { padding: 20px; border-bottom: 1px solid #f8f9fa; color: var(--text-main); font-size: 0.9rem; font-weight: 500; }
     
     .active-user { background: rgba(46, 204, 113, 0.1); color: #27ae60; padding: 6px 14px; border-radius: 50px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; }
     .btn-view { display: inline-flex; align-items: center; justify-content: center; width: 35px; height: 35px; background: rgba(123, 121, 242, 0.1); color: var(--secondary); border-radius: 10px; transition: 0.2s; }
     .btn-view:hover { background: var(--secondary); color: white; transform: scale(1.1); }
 
-    .avatar { width: 40px; height: 40px; border-radius: 50%; background: #fafafa; border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--primary); font-size: 0.9rem; }
+    .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--surface-alt); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--primary); font-size: 0.9rem; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] .customer-content :is(input, select) { border-color: var(--border-color); color-scheme: dark; }
+    html[data-theme="dark"] .avatar { border-color: var(--border-color); background: rgba(245, 158, 11, 0.1); }
+    html[data-theme="dark"] #customerTable td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .active-user { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
+    html[data-theme="dark"] :is(.stat-card, .form-card, .list-card) { box-shadow: none; }
+    html[data-theme="dark"] .customer-content .shadow-pink-100 { box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page */
+    html[data-theme="dark"] .customer-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .customer-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .customer-content :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
+    html[data-theme="dark"] .customer-content .bg-gray-50\/30 { background-color: var(--surface-alt); }
 </style>
 
 <main class="customer-content">
@@ -228,6 +243,9 @@ include 'templates/header.php';
                 toggleCustForm();
             } catch (err) {
                 console.error(err);
+                // CHANGED: previously only logged to the console, so a
+                // failed save looked like "nothing happened".
+                alert('Could not enroll this customer: ' + err.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = 'Authorize Profile';
@@ -248,7 +266,9 @@ include 'templates/header.php';
 
     function toggleCustForm() {
         var f = document.getElementById("manualCustForm");
-        f.style.display = (f.style.display === "none" || f.style.display === "") ? "block" : "none";
+        // Reads the real current display (the .form-card class sets
+        // display:none), so the first click always opens the form.
+        f.style.display = (getComputedStyle(f).display === "none") ? "block" : "none";
     }
 </script>
 

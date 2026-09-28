@@ -13,8 +13,54 @@ if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])) {
 include 'templates/header.php'; 
 ?>
 
-<main class="pos-content" style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">
-    <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 3.5rem;">
+<style>
+    /* Former inline styles, now named classes so they can follow the
+       theme. Light values are identical to the old inline ones:
+       white -> --surface, #f0f0f0 -> --border-color, #fafafa -> --surface-alt. */
+    .catalog-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3.5rem; }
+    .catalog-card { background: var(--surface); border-radius: 35px; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.02); }
+    .catalog-form-card { display: none; padding: 3rem; margin-bottom: 3.5rem; }
+    .catalog-table-card { overflow: hidden; }
+    .catalog-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2rem; }
+    .catalog-label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px; }
+    .catalog-input { padding: 15px; border-radius: 15px; border: 1px solid var(--border-color); width: 100%; outline: none; background: var(--surface-alt); color: var(--text-main); font-size: 0.9rem; font-weight: 600; }
+    select.catalog-input { cursor: pointer; }
+    .catalog-save-btn { width: 100%; background: var(--primary); color: white; margin-top: 3rem; padding: 20px; border-radius: 20px; border: none; font-weight: 900; cursor: pointer; transition: 0.4s; text-transform: uppercase; letter-spacing: 3px; font-size: 0.7rem; box-shadow: 0 10px 20px rgba(233,30,99,0.15); }
+    .catalog-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .catalog-table { width: 100%; text-align: left; border-collapse: collapse; }
+    .catalog-table thead tr { background: var(--surface-alt); border-bottom: 1px solid var(--border-color); }
+    .catalog-table th { padding: 25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; }
+
+    @media (max-width: 700px) {
+        .catalog-form-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] .catalog-card { box-shadow: none; }
+    html[data-theme="dark"] .catalog-save-btn { box-shadow: none; }
+    html[data-theme="dark"] select.catalog-input { color-scheme: dark; }
+    html[data-theme="dark"] .catalog-content .shadow-pink-100 { box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page */
+    html[data-theme="dark"] .catalog-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .catalog-content :is(.text-gray-500, .text-gray-400, .text-gray-300, .text-muted) { color: var(--text-light); }
+
+    /* Row hover: a pale-gray wash would flash white on a dark table */
+    html[data-theme="dark"] .catalog-content .hover\:bg-gray-50\/50:hover { background-color: var(--surface-alt); }
+
+    /* Archive button: tinted at rest... */
+    html[data-theme="dark"] .catalog-content .bg-amber-50 { background-color: rgba(245, 158, 11, 0.14); }
+    html[data-theme="dark"] .catalog-content .text-amber-600 { color: #fcd34d; }
+    /* ...and the SAME solid amber hover as light mode. Needed because the
+       dark "at rest" rules above are more specific than Tailwind's own
+       hover classes and would otherwise block the hover effect. */
+    html[data-theme="dark"] .catalog-content .hover\:bg-amber-500:hover { background-color: #f59e0b; }
+    html[data-theme="dark"] .catalog-content .hover\:text-white:hover { color: #ffffff; }
+</style>
+
+<main class="pos-content catalog-content" style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">
+    <div class="catalog-header">
         <div>
             <h1 class="brand-font text-5xl font-black text-gray-800">Product Catalog</h1>
             <p class="text-gray-400 text-sm font-medium mt-1">Curate and manage your collection of premium floral artifacts.</p>
@@ -25,17 +71,17 @@ include 'templates/header.php';
     </div>
 
     <!-- FORM BOX -->
-    <div id="pform" style="display:none; background:white; padding:3rem; border-radius:35px; margin-bottom:3.5rem; border:1px solid #f0f0f0; box-shadow: 0 10px 30px rgba(0,0,0,0.02);">
+    <div id="pform" class="catalog-card catalog-form-card">
         <h4 class="brand-font text-3xl font-black text-gray-800 mb-8">Initialize New Product</h4>
         <form id="addProductForm">
-            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:2rem;">
+            <div class="catalog-form-grid">
                 <div>
-                    <label style="font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px;">Product Descriptor</label>
-                    <input type="text" id="productName" placeholder="e.g. Midnight Serenade Bouquet" required style="padding:15px; border-radius:15px; border:1px solid #f0f0f0; width: 100%; outline: none; background: #fafafa; font-size: 0.9rem; font-weight: 600;">
+                    <label class="catalog-label" for="productName">Product Descriptor</label>
+                    <input type="text" id="productName" class="catalog-input" placeholder="e.g. Midnight Serenade Bouquet" required>
                 </div>
                 <div>
-                    <label style="font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px;">Classification</label>
-                    <select id="category" style="padding:15px; border-radius:15px; border:1px solid #f0f0f0; width: 100%; outline: none; background: #fafafa; font-size: 0.9rem; font-weight: 600; cursor: pointer;">
+                    <label class="catalog-label" for="category">Classification</label>
+                    <select id="category" class="catalog-input">
                         <option>Bouquet</option>
                         <option>Flower Stand</option>
                         <option>Gift Box</option>
@@ -44,27 +90,27 @@ include 'templates/header.php';
                     </select>
                 </div>
                 <div>
-                    <label style="font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px;">Valuation (₱)</label>
-                    <input type="number" step="0.01" id="price" placeholder="0.00" required style="padding:15px; border-radius:15px; border:1px solid #f0f0f0; width: 100%; outline: none; background: #fafafa; font-size: 0.9rem; font-weight: 600;">
+                    <label class="catalog-label" for="price">Valuation (₱)</label>
+                    <input type="number" step="0.01" id="price" class="catalog-input" placeholder="0.00" required>
                 </div>
                 <div>
-                    <label style="font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px;">Initial Deployment Qty</label>
-                    <input type="number" id="stockQuantity" placeholder="0" required style="padding:15px; border-radius:15px; border:1px solid #f0f0f0; width: 100%; outline: none; background: #fafafa; font-size: 0.9rem; font-weight: 600;">
+                    <label class="catalog-label" for="stockQuantity">Initial Deployment Qty</label>
+                    <input type="number" id="stockQuantity" class="catalog-input" placeholder="0" required>
                 </div>
             </div>
-            <button type="submit" id="saveBtn" style="width:100%; background:var(--primary); color:white; margin-top:3rem; padding:20px; border-radius:20px; border:none; font-weight:900; cursor:pointer; transition: 0.4s; text-transform: uppercase; letter-spacing: 3px; font-size: 0.7rem; box-shadow: 0 10px 20px rgba(233,30,99,0.15);">Commit Product to Master Catalog</button>
+            <button type="submit" id="saveBtn" class="catalog-save-btn">Commit Product to Master Catalog</button>
         </form>
     </div>
 
-    <div style="background:white; border-radius:35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden;">
-        <table style="width:100%; text-align:left; border-collapse:collapse;">
+    <div class="catalog-card catalog-table-card">
+        <table class="catalog-table">
             <thead>
-                <tr style="background: #fafafa; border-bottom: 1px solid #f0f0f0;">
-                    <th style="padding:25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px;">Master Product Details</th>
-                    <th style="padding:25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px;">Classification</th>
-                    <th style="padding:25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px;">Market Valuation</th>
-                    <th style="padding:25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px;">Inventory Readiness</th>
-                    <th style="padding:25px 20px; font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; text-align: right;">Operations</th>
+                <tr>
+                    <th>Master Product Details</th>
+                    <th>Classification</th>
+                    <th>Market Valuation</th>
+                    <th>Inventory Readiness</th>
+                    <th style="text-align: right;">Operations</th>
                 </tr>
             </thead>
             <tbody id="productListData">
@@ -75,6 +121,10 @@ include 'templates/header.php';
 </main>
 
 <script>
+    // Single source for the button's resting label, so the text shown
+    // before AND after a save can never drift apart again.
+    const SAVE_BTN_LABEL = 'Commit Product to Master Catalog';
+
     document.addEventListener('DOMContentLoaded', () => {
         const productListData = document.getElementById('productListData');
 
@@ -93,7 +143,6 @@ include 'templates/header.php';
                 }
                 const id = doc.id;
                 const stock = parseInt(p.stock || 0);
-                const colorClass = stock <= 5 ? 'critical' : (stock <= 15 ? 'warning' : 'healthy');
                 const dotColor = stock <= 5 ? 'var(--primary)' : (stock <= 15 ? '#f39c12' : '#2ecc71');
 
                 html += `
@@ -146,14 +195,17 @@ include 'templates/header.php';
                 alert('Error: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerText = 'Save Product to Catalog';
+                btn.innerText = SAVE_BTN_LABEL;
             }
         };
     });
 
     function toggleForm() {
         const x = document.getElementById("pform");
-        if (x.style.display === "none" || x.style.display === "") {
+        // getComputedStyle reads the ACTUAL current display value, which
+        // now comes from the .catalog-form-card class (display:none)
+        // rather than an inline style="display:none".
+        if (getComputedStyle(x).display === "none") {
             x.style.display = "block";
             x.scrollIntoView({ behavior: 'smooth' });
         } else {

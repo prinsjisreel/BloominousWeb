@@ -1,51 +1,85 @@
 <?php
-require_once __DIR__ . '/templates/header.php';
+/**
+ * BLOOMINOUS - Override Codes (admin / super-admin only)
+ *
+ * FIX: the login + role checks now run BEFORE templates/header.php is
+ * included. header() redirects only work before any HTML has been sent;
+ * previously the header (and its HTML) was included first, so the
+ * redirect below was silently ignored and non-admins could open the page.
+ */
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-// header.php already blocks customers, delivery personnel, and anyone
-// not logged in at all. It does NOT restrict staff/employee from
-// individual admin pages — each page gates that itself. This one is
-// admin-only, same as fraud_analytics.php and manage_accounts.php: an
+// Must be logged in at all
+if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])) {
+    header("Location: index.php");
+    exit();
+}
+
+// Admin-only, same as fraud_analytics.php and manage_accounts.php: an
 // employee's actual write here would be denied by firestore.rules'
-// isAdmin() check anyway, but redirecting them here avoids a confusing
+// isAdmin() check anyway, but redirecting them avoids a confusing
 // "permission-denied" screen on a page they were never meant to reach.
 $user_role = $_SESSION['role'] ?? $_SESSION['admin_role'] ?? '';
 if ($user_role !== 'admin' && $user_role !== 'super-admin') {
     header("Location: admin.php");
     exit();
 }
+
+require_once __DIR__ . '/templates/header.php';
 ?>
 
-<div class="mb-8">
-    <h1 class="text-3xl font-black text-gray-800 brand-font">Override Codes</h1>
-    <p class="text-sm text-gray-500 mt-1">Single-use codes required for an employee's 4th+ walk-in cancellation of the day at a branch.</p>
-</div>
+<style>
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>.
+       The .card containers already follow the theme via header.php;
+       these rules recolor the Tailwind classes inside this page. */
+    html[data-theme="dark"] .override-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .override-content .text-gray-600 { color: var(--text-secondary); }
+    html[data-theme="dark"] .override-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .override-content .bg-gray-50 { background-color: var(--surface-alt); }
+    html[data-theme="dark"] .override-content :is(.border-gray-100, .border-gray-200) { border-color: var(--border-color); }
 
-<div class="card mb-8">
-    <div class="flex justify-between items-center mb-6">
-        <div>
-            <h2 class="text-lg font-black text-gray-800">Current Batch</h2>
-            <p class="text-xs text-gray-400" id="branch-context-label">Loading branch...</p>
+    /* Unused code chips: pale amber sticker -> translucent amber tint */
+    html[data-theme="dark"] .override-content .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12); }
+    html[data-theme="dark"] .override-content .border-amber-200 { border-color: rgba(245, 158, 11, 0.35); }
+    html[data-theme="dark"] .override-content .text-amber-700 { color: #fcd34d; }
+</style>
+
+<main class="override-content">
+    <div class="mb-8">
+        <h1 class="text-3xl font-black text-gray-800 brand-font">Override Codes</h1>
+        <p class="text-sm text-gray-500 mt-1">Single-use codes required for an employee's 4th+ walk-in cancellation of the day at a branch.</p>
+    </div>
+
+    <div class="card mb-8">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h2 class="text-lg font-black text-gray-800">Current Batch</h2>
+                <p class="text-xs text-gray-400" id="branch-context-label">Loading branch...</p>
+            </div>
+            <button id="generate-batch-btn" class="btn-primary">
+                <i class="fa-solid fa-key"></i>
+                Generate New Batch of 8
+            </button>
         </div>
-        <button id="generate-batch-btn" class="btn-primary">
-            <i class="fa-solid fa-key"></i>
-            Generate New Batch of 8
-        </button>
+
+        <div id="unused-codes-container" class="flex flex-wrap gap-3">
+            <p class="text-gray-300 italic text-sm">Nothing generated yet</p>
+        </div>
     </div>
 
-    <div id="unused-codes-container" class="flex flex-wrap gap-3">
-        <p class="text-gray-300 italic text-sm">Nothing generated yet</p>
+    <div class="card">
+        <h2 class="text-lg font-black text-gray-800 mb-4">How This Works</h2>
+        <ul class="text-sm text-gray-600 space-y-2 list-disc pl-5">
+            <li>Each code is <strong>single-use</strong> — the instant an employee's app or a cashier uses one to approve a cancellation, it's permanently marked used and can never be reused, on either platform.</li>
+            <li>Codes are scoped to <strong>this specific branch</strong> only.</li>
+            <li>A new batch of 8 <strong>can only be generated once every code in the current batch has been used</strong> — the same rule Google's backup codes follow. Used codes stay visible with a strikethrough so you can see the batch's full history until it's replaced.</li>
+            <li>Every override used is recorded in the Admin Activity Log, including which employee used it and which order it applied to.</li>
+        </ul>
     </div>
-</div>
-
-<div class="card">
-    <h2 class="text-lg font-black text-gray-800 mb-4">How This Works</h2>
-    <ul class="text-sm text-gray-600 space-y-2 list-disc pl-5">
-        <li>Each code is <strong>single-use</strong> — the instant an employee's app or a cashier uses one to approve a cancellation, it's permanently marked used and can never be reused, on either platform.</li>
-        <li>Codes are scoped to <strong>this specific branch</strong> only.</li>
-        <li>A new batch of 8 <strong>can only be generated once every code in the current batch has been used</strong> — the same rule Google's backup codes follow. Used codes stay visible with a strikethrough so you can see the batch's full history until it's replaced.</li>
-        <li>Every override used is recorded in the Admin Activity Log, including which employee used it and which order it applied to.</li>
-    </ul>
-</div>
+</main>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
@@ -161,6 +195,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
       }, err => {
           console.error('Error loading batch pointer:', err);
+          // Shown on the page too, so a rules/permission problem is
+          // visible instead of silently looking like "no codes yet".
+          container.innerHTML = '<p class="text-red-400 text-sm">Error loading codes: ' + err.message + '</p>';
       });
 
     generateBtn.addEventListener('click', async () => {

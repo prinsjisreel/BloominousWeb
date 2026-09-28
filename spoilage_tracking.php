@@ -10,25 +10,62 @@ if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])) {
     exit();
 }
 
+// Who is filing the report. json_encode turns it into a SAFE JavaScript
+// string literal (quotes included), so a name like "O'Neil" can't break
+// the script below. The JSON_HEX_* flags also escape <, >, ', " and &.
+$reporterName = $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'Staff';
+$reporterJs = json_encode($reporterName, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+
 include 'templates/header.php'; 
 ?>
 
 <style>
     .pos-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 3rem; }
-    .stat-card { background: #fff; padding: 2rem; border-radius: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid #f0f0f0; }
+    .stat-card { background: var(--surface); padding: 2rem; border-radius: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-color); }
     .icon-box { width: 65px; height: 65px; border-radius: 20px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
     
     .red-bg { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
     .orange-bg { background: rgba(255, 177, 66, 0.1); color: #f39c12; }
     
     .amount-text { font-family: 'Cormorant Garamond', serif; font-size: 2.2rem; font-weight: 800; color: var(--text-main); line-height: 1; }
-    .table-card { background: #fff; border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
+    .table-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
     
-    .form-box { background: #fff; padding: 3rem; border-radius: 35px; margin-bottom: 3rem; border: 1px solid var(--primary); border-style: dashed; }
+    .form-box { background: var(--surface); padding: 3rem; border-radius: 35px; margin-bottom: 3rem; border: 1px solid var(--primary); border-style: dashed; }
     label { font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1px; }
-    input, select, textarea { width: 100%; padding: 14px 18px; border-radius: 12px; border: 1px solid #f0f0f0; outline: none; background: #fafafa; transition: 0.3s; font-size: 0.9rem; font-weight: 500; color: var(--text-main); }
-    input:focus { border-color: var(--primary); background: #fff; }
+    input, select, textarea { width: 100%; padding: 14px 18px; border-radius: 12px; border: 1px solid var(--border-color); outline: none; background: var(--surface-alt); transition: 0.3s; font-size: 0.9rem; font-weight: 500; color: var(--text-main); }
+    input:focus { border-color: var(--primary); background: var(--surface); }
+
+    /* History table (these were inline styles; now classes so they can
+       follow the theme). Light values are unchanged. */
+    .spoil-history-title { font-weight: 800; margin-bottom: 25px; color: var(--text-main); }
+    .spoil-table { width: 100%; text-align: left; border-collapse: collapse; }
+    .spoil-table thead { border-bottom: 2px solid #f0f2f5; color: #b2bec3; font-size: 0.75rem; text-transform: uppercase; }
+    .spoil-table th { padding: 15px; }
+    .spoil-table td { padding: 15px; }
+    .spoil-row { border-bottom: 1px solid #f8f9fa; transition: 0.2s; }
+    .spoil-muted { color: #7d8da1; }
+    .spoil-main { color: var(--text-main); }
+    .spoil-empty { text-align: center; padding: 50px; color: #b2bec3; }
+    .salvaged-badge { background: #e8f5e9; color: #2e7d32; padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; margin-left: 10px; }
+    .loss-salvaged { color: #2e7d32; font-weight: 800; }
+    .loss-spoiled { color: #c62828; font-weight: 800; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] :is(.stat-card, .table-card) { box-shadow: none; }
+    html[data-theme="dark"] .spoil-table thead { border-bottom-color: var(--border-color); color: var(--text-light); }
+    html[data-theme="dark"] .spoil-row { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] :is(.spoil-muted, .spoil-empty) { color: var(--text-light); }
+    html[data-theme="dark"] .salvaged-badge { background: rgba(46, 125, 50, 0.2); color: #86efac; }
+    html[data-theme="dark"] .loss-salvaged { color: #86efac; }
+    html[data-theme="dark"] .loss-spoiled { color: #fca5a5; }
+    html[data-theme="dark"] .pos-content :is(input, select, textarea) { color-scheme: dark; }
+    html[data-theme="dark"] .pos-content .shadow-pink-100 { box-shadow: none; }
+
+    /* Tailwind class remap, scoped to this page */
+    html[data-theme="dark"] .pos-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .pos-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
 </style>
 
 <main class="pos-content">
@@ -96,26 +133,28 @@ include 'templates/header.php';
     </div>
 
     <div class="table-card">
-        <h4 style="font-weight: 800; margin-bottom: 25px; color: #363949;">Spoilage History</h4>
-        <table style="width: 100%; text-align: left; border-collapse: collapse;">
-            <thead style="border-bottom: 2px solid #f0f2f5; color: #b2bec3; font-size: 0.75rem; text-transform: uppercase;">
+        <h4 class="spoil-history-title">Spoilage History</h4>
+        <table class="spoil-table">
+            <thead>
                 <tr>
-                    <th style="padding:15px;">Date</th>
-                    <th style="padding:15px;">Flower</th>
-                    <th style="padding:15px;">Qty</th>
-                    <th style="padding:15px;">Reason</th>
-                    <th style="padding:15px;">Loss</th>
-                    <th style="padding:15px;">Reported By</th>
+                    <th>Date</th>
+                    <th>Flower</th>
+                    <th>Qty</th>
+                    <th>Reason</th>
+                    <th>Loss</th>
+                    <th>Reported By</th>
                 </tr>
             </thead>
             <tbody id="spoilageData">
-                <tr><td colspan="6" style="text-align:center; padding:50px; color:#b2bec3;">Loading history...</td></tr>
+                <tr><td colspan="6" class="spoil-empty">Loading history...</td></tr>
             </tbody>
         </table>
     </div>
 </main>
 
 <script>
+    const REPORTER_NAME = <?php echo $reporterJs; ?>;
+    const SAVE_BTN_LABEL = 'Execute Depletion & Reconciliation';
     let inventoryData = [];
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -149,7 +188,7 @@ include 'templates/header.php';
         getBranchPath('spoilage').orderBy('created_at', 'desc').onSnapshot(snap => {
             if (snap.empty) {
                 spoilageData.innerHTML = `
-                    <tr><td colspan="6" style="text-align:center; padding:50px; color:#b2bec3;">
+                    <tr><td colspan="6" class="spoil-empty">
                         <i class="fa-solid fa-leaf" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.2;"></i>
                         <p>No spoilage recorded yet.</p>
                     </td></tr>
@@ -173,18 +212,16 @@ include 'templates/header.php';
                 const date = s.created_at ? s.created_at.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
 
                 const isSalvaged = s.is_salvaged === true || s.reason === 'Salvaged / Reusable Scraps';
-                const statusBadge = isSalvaged 
-                    ? '<span style="background: #e8f5e9; color: #2e7d32; padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; margin-left: 10px;">Salvaged</span>' 
-                    : '';
+                const statusBadge = isSalvaged ? '<span class="salvaged-badge">Salvaged</span>' : '';
 
                 html += `
-                <tr style="border-bottom: 1px solid #f8f9fa; transition: 0.2s;">
-                    <td style="padding:15px; font-size: 0.85rem; color:#7d8da1;">${date}</td>
-                    <td style="padding:15px; font-weight:700; color: #363949;">${s.flower_name} ${statusBadge}</td>
-                    <td style="padding:15px; font-weight:600; color: #363949;">${qty}</td>
-                    <td style="padding:15px; color:#7d8da1; font-size: 0.85rem; font-style: italic;">${s.reason || 'N/A'}</td>
-                    <td style="padding:15px; color: ${isSalvaged ? '#2e7d32' : '#c62828'}; font-weight:800;">₱${loss.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                    <td style="padding:15px; color:#7d8da1; font-size: 0.8rem;">${s.reported_by || 'System'}</td>
+                <tr class="spoil-row">
+                    <td class="spoil-muted" style="font-size: 0.85rem;">${date}</td>
+                    <td class="spoil-main" style="font-weight:700;">${s.flower_name} ${statusBadge}</td>
+                    <td class="spoil-main" style="font-weight:600;">${qty}</td>
+                    <td class="spoil-muted" style="font-size: 0.85rem; font-style: italic;">${s.reason || 'N/A'}</td>
+                    <td class="${isSalvaged ? 'loss-salvaged' : 'loss-spoiled'}">₱${loss.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="spoil-muted" style="font-size: 0.8rem;">${s.reported_by || 'System'}</td>
                 </tr>
                 `;
             });
@@ -232,7 +269,7 @@ include 'templates/header.php';
                     quantity: qty,
                     loss_amount: loss,
                     reason: reason,
-                    reported_by: '<?php echo $_SESSION['admin_name'] ?? $_SESSION['username'] ?? 'Staff'; ?>',
+                    reported_by: REPORTER_NAME,
                     is_salvaged: reason === 'Salvaged / Reusable Scraps',
                     created_at: firebase.firestore.FieldValue.serverTimestamp()
                 });
@@ -324,7 +361,7 @@ include 'templates/header.php';
                 alert('Error: ' + err.message);
             } finally {
                 btn.disabled = false;
-                btn.innerText = 'Save Report & Deduct Stock';
+                btn.innerText = SAVE_BTN_LABEL;
             }
         };
     });

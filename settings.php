@@ -1,6 +1,14 @@
 <?php 
 /**
  * BLOOMINOUS - Settings & Configurations (Firebase Spoke)
+ *
+ * Every row is a "settings tile" (icon + title + subtitle), mirroring
+ * settings_page.dart. A tile either:
+ *   - shows info        (Email, Version)
+ *   - toggles something (Dark Mode)
+ *   - opens a modal     (Change Password, Terms of Service,
+ *                        Privacy Policy, FAQ)
+ *   - goes to a page    (Shop Profile -> Manage Branches)
  */
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
@@ -20,22 +28,20 @@ include 'templates/header.php';
     .settings-content { padding: 30px; max-width: 1000px; margin: 0 auto; font-family: 'Inter', sans-serif; }
     .settings-section-label { font-size: 0.7rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; margin: 32px 0 14px; }
     .settings-section-label:first-of-type { margin-top: 0; }
-    .card { background: var(--surface); padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); border: 1px solid var(--border-color); margin-bottom: 16px; }
     .form-group { margin-bottom: 15px; }
     label { font-size: 0.75rem; font-weight: 700; color: var(--text-light); text-transform: uppercase; margin-bottom: 5px; display: block; }
     input, textarea { width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 10px; outline: none; font-size: 0.9rem; background: var(--surface-alt); color: var(--text-main); transition: 0.3s; }
     input:focus, textarea:focus { border-color: #7B79F2; }
     .btn-save { background: #7B79F2; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 10px; transition: 0.3s; }
     .btn-save:hover { background: #5a58d1; transform: translateY(-2px); }
+    .btn-save:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
     .alert { padding: 15px; border-radius: 12px; margin-bottom: 20px; font-weight: 600; font-size: 0.9rem; display: none; }
 
     /* --- Settings-tile styling: mirrors settings_page.dart's tile
-       list -- icon chip, title, subtitle, optional chevron/switch on
-       the right. All colors route through the CSS variables from
-       header.php, so this genuinely redraws under dark mode instead
-       of just inheriting the shared sidebar's dark styling while
-       staying light itself. --- */
-    .settings-tile { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border-color); margin-bottom: 10px; transition: 0.2s; }
+       list. All colors route through header.php's CSS variables so
+       the page redraws correctly in dark mode. text-decoration:none
+       lets an <a> tile (Shop Profile) look identical to a <div> tile. --- */
+    .settings-tile { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border-color); margin-bottom: 10px; transition: 0.2s; text-decoration: none; }
     .settings-tile.clickable { cursor: pointer; }
     .settings-tile.clickable:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.04); }
     .settings-tile-icon { width: 38px; height: 38px; border-radius: 50%; background: rgba(245, 158, 11, 0.12); display: flex; align-items: center; justify-content: center; color: var(--primary); flex-shrink: 0; }
@@ -52,10 +58,11 @@ include 'templates/header.php';
     .toggle-switch input:checked + .toggle-slider { background: var(--primary); }
     .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
 
-    /* --- Modal (Terms of Service) --- */
+    /* --- Modals (Change Password, Terms of Service, Privacy Policy, FAQ) --- */
     .bloom-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 300; align-items: center; justify-content: center; padding: 20px; }
     .bloom-modal-overlay.open { display: flex; }
     .bloom-modal { background: var(--surface); border-radius: 24px; max-width: 680px; width: 100%; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; }
+    .bloom-modal.bloom-modal-sm { max-width: 440px; }
     .bloom-modal-header { padding: 24px 28px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
     .bloom-modal-header h3 { margin: 0; font-weight: 800; color: var(--text-main); }
     .bloom-modal-close { background: none; border: none; font-size: 1.2rem; color: var(--text-light); cursor: pointer; }
@@ -63,7 +70,9 @@ include 'templates/header.php';
     .bloom-modal-body h4 { font-weight: 800; margin: 20px 0 8px; color: var(--text-main); }
     .bloom-modal-body h4:first-child { margin-top: 0; }
     .bloom-modal-body p, .bloom-modal-body ol, .bloom-modal-body ul { margin: 0 0 10px; color: var(--text-secondary); }
+    .bloom-modal-body ul { padding-left: 20px; list-style: disc; }
     .bloom-modal-body li { margin-bottom: 6px; }
+    .modal-inline-error { display: none; font-size: 0.8rem; font-weight: 600; color: #ff7782; background: rgba(255, 119, 130, 0.1); padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; }
 
     /* --- FAQ list --- */
     .faq-item { padding: 14px 18px; border-radius: 14px; background: var(--surface-alt); border: 1px solid var(--border-color); margin-bottom: 8px; }
@@ -92,48 +101,29 @@ include 'templates/header.php';
     </div>
 
     <?php if ($canManageShop): ?>
-    <div class="card">
-        <h4 style="font-weight: 800; margin-bottom: 16px; color: var(--text-main);"><i class="fa-solid fa-key mr-2" style="color: #FF5252;"></i> Change Password</h4>
-        <form id="changePasswordForm">
-            <div class="form-group">
-                <label>New Password</label>
-                <input type="password" id="newPassword" required placeholder="Minimum 6 characters">
-            </div>
-            <div class="form-group">
-                <label>Confirm Password</label>
-                <input type="password" id="confirmNewPassword" required placeholder="Confirm new password">
-            </div>
-            <button type="submit" id="changePasswordBtn" class="btn-save" style="background: #FF5252;">Update Password</button>
-        </form>
+    <!-- Change Password: a tile that opens the password modal below -->
+    <div class="settings-tile clickable" onclick="openBloomModal('passwordModal')">
+        <div class="settings-tile-icon"><i class="fa-solid fa-key"></i></div>
+        <div class="settings-tile-text">
+            <p class="settings-tile-title">Change Password</p>
+            <p class="settings-tile-subtitle">Update the password for your account</p>
+        </div>
+        <i class="fa-solid fa-chevron-right settings-tile-chevron"></i>
     </div>
     <?php endif; ?>
 
     <!-- ============ SHOP PROFILE ============ -->
     <?php if ($canManageShop): ?>
     <p class="settings-section-label">Shop Profile</p>
-    <div class="card">
-        <form id="shopSettingsForm">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div class="form-group">
-                    <label>Shop Name</label>
-                    <input type="text" id="shopName" required>
-                </div>
-                <div class="form-group">
-                    <label>Contact No.</label>
-                    <input type="text" id="contactNumber" required>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Email Address</label>
-                <input type="email" id="emailAddress" required>
-            </div>
-            <div class="form-group">
-                <label>Physical Address</label>
-                <textarea id="shopAddress" rows="2" required></textarea>
-            </div>
-            <button type="submit" id="saveShopBtn" class="btn-save">Save Shop Profile</button>
-        </form>
-    </div>
+    <!-- Shop Profile: a tile that goes to the Manage Branches page -->
+    <a class="settings-tile clickable" href="manage_branches.php">
+        <div class="settings-tile-icon"><i class="fa-solid fa-store"></i></div>
+        <div class="settings-tile-text">
+            <p class="settings-tile-title">Shop Profile</p>
+            <p class="settings-tile-subtitle">Manage your shop branches and locations</p>
+        </div>
+        <i class="fa-solid fa-chevron-right settings-tile-chevron"></i>
+    </a>
     <?php endif; ?>
 
     <!-- ============ PREFERENCES ============ -->
@@ -162,7 +152,7 @@ include 'templates/header.php';
         </div>
     </div>
 
-    <div class="settings-tile clickable" onclick="document.getElementById('tosModal').classList.add('open')">
+    <div class="settings-tile clickable" onclick="openBloomModal('tosModal')">
         <div class="settings-tile-icon"><i class="fa-solid fa-file-contract"></i></div>
         <div class="settings-tile-text">
             <p class="settings-tile-title">Terms of Service</p>
@@ -171,7 +161,17 @@ include 'templates/header.php';
         <i class="fa-solid fa-chevron-right settings-tile-chevron"></i>
     </div>
 
-    <div class="settings-tile clickable" onclick="document.getElementById('faqModal').classList.add('open')">
+    <!-- NEW: Privacy Policy tile (visible to every role, like Terms) -->
+    <div class="settings-tile clickable" onclick="openBloomModal('privacyModal')">
+        <div class="settings-tile-icon"><i class="fa-solid fa-user-shield"></i></div>
+        <div class="settings-tile-text">
+            <p class="settings-tile-title">Privacy Policy</p>
+            <p class="settings-tile-subtitle">How we collect, use, and protect your data</p>
+        </div>
+        <i class="fa-solid fa-chevron-right settings-tile-chevron"></i>
+    </div>
+
+    <div class="settings-tile clickable" onclick="openBloomModal('faqModal')">
         <div class="settings-tile-icon"><i class="fa-solid fa-circle-question"></i></div>
         <div class="settings-tile-text">
             <p class="settings-tile-title">FAQ</p>
@@ -189,12 +189,40 @@ include 'templates/header.php';
     </div>
 </main>
 
+<?php if ($canManageShop): ?>
+<!-- ============ CHANGE PASSWORD MODAL ============ -->
+<div class="bloom-modal-overlay" id="passwordModal">
+    <div class="bloom-modal bloom-modal-sm">
+        <div class="bloom-modal-header">
+            <h3><i class="fa-solid fa-key" style="color: #FF5252; margin-right: 8px;"></i>Change Password</h3>
+            <button class="bloom-modal-close" onclick="closeBloomModal('passwordModal')">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="bloom-modal-body">
+            <div id="passwordModalError" class="modal-inline-error"></div>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="newPassword" required placeholder="Minimum 6 characters" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm Password</label>
+                    <input type="password" id="confirmNewPassword" required placeholder="Confirm new password" autocomplete="new-password">
+                </div>
+                <button type="submit" id="changePasswordBtn" class="btn-save" style="background: #FF5252;">Update Password</button>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- ============ TERMS OF SERVICE MODAL ============ -->
 <div class="bloom-modal-overlay" id="tosModal">
     <div class="bloom-modal">
         <div class="bloom-modal-header">
             <h3>Terms of Service</h3>
-            <button class="bloom-modal-close" onclick="document.getElementById('tosModal').classList.remove('open')">
+            <button class="bloom-modal-close" onclick="closeBloomModal('tosModal')">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
@@ -260,12 +288,50 @@ include 'templates/header.php';
     </div>
 </div>
 
+<!-- ============ PRIVACY POLICY MODAL (NEW) ============ -->
+<div class="bloom-modal-overlay" id="privacyModal">
+    <div class="bloom-modal">
+        <div class="bloom-modal-header">
+            <h3>Privacy Policy</h3>
+            <button class="bloom-modal-close" onclick="closeBloomModal('privacyModal')">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="bloom-modal-body">
+            <h4>1. Information We Collect</h4>
+            <p>We collect the following information to provide and improve our services:</p>
+            <ul>
+                <li><strong>Personal Information:</strong> Name, email address, and other profile details provided during account setup.</li>
+                <li><strong>Device Information:</strong> Mobile device type, operating system version, and unique device identifiers.</li>
+                <li><strong>Usage Data:</strong> Analytics regarding how you interact with specific features within the app.</li>
+            </ul>
+
+            <h4>2. How We Use Your Data</h4>
+            <p>We use the collected data to:</p>
+            <ul>
+                <li>Operate, maintain, and optimize application performance.</li>
+                <li>Process your requests and account transactions.</li>
+                <li>Enhance system security and resolve technical errors.</li>
+            </ul>
+
+            <h4>3. Third-Party Data Sharing</h4>
+            <p>We do not sell your personal data. Data may only be shared with trusted third-party service providers (such as cloud database hosting or authentication services) that assist in operating the app.</p>
+
+            <h4>4. Data Security</h4>
+            <p>We implement standard technical security measures, including encryption, to safeguard your personal information against unauthorized access.</p>
+
+            <h4>5. Your Data Rights</h4>
+            <p>You have the right to request access to, correction of, or permanent deletion of your personal data stored in our system. Please contact our support team to submit a request.</p>
+        </div>
+    </div>
+</div>
+
 <!-- ============ FAQ MODAL ============ -->
 <div class="bloom-modal-overlay" id="faqModal">
     <div class="bloom-modal">
         <div class="bloom-modal-header">
             <h3>Frequently Asked Questions</h3>
-            <button class="bloom-modal-close" onclick="document.getElementById('faqModal').classList.remove('open')">
+            <button class="bloom-modal-close" onclick="closeBloomModal('faqModal')">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
@@ -292,14 +358,32 @@ include 'templates/header.php';
 </div>
 
 <script>
+    // --- Shared modal helpers: every modal on this page opens and
+    // closes through these two functions. ---
+    function openBloomModal(id) {
+        const modal = document.getElementById(id);
+        if (modal) modal.classList.add('open');
+    }
+
+    function closeBloomModal(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.remove('open');
+        // Never leave typed passwords sitting in a hidden form.
+        if (id === 'passwordModal') {
+            const form = document.getElementById('changePasswordForm');
+            if (form) form.reset();
+            const err = document.getElementById('passwordModalError');
+            if (err) err.style.display = 'none';
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const canManageShop = <?php echo $canManageShop ? 'true' : 'false'; ?>;
 
-        // --- Dark Mode toggle: reflects the CURRENT resolved theme on
-        // load (from window.isBloomThemeDark(), set by header.php),
-        // and flips it via window.toggleBloomTheme() -- both helpers
-        // already exist globally, this page just wires the switch to
-        // them. ---
+        // --- Dark Mode toggle: reflects the current resolved theme on
+        // load and flips it via window.toggleBloomTheme() (both helpers
+        // live globally in header.php). ---
         const darkToggle = document.getElementById('darkModeToggle');
         if (darkToggle) {
             darkToggle.checked = window.isBloomThemeDark();
@@ -309,53 +393,26 @@ include 'templates/header.php';
         }
 
         <?php if ($canManageShop): ?>
-        // Load Shop Settings
-        db.collection('settings').doc('shop').onSnapshot(doc => {
-            if (doc.exists) {
-                const s = doc.data();
-                document.getElementById('shopName').value = s.shop_name || '';
-                document.getElementById('contactNumber').value = s.contact_number || '';
-                document.getElementById('emailAddress').value = s.email_address || '';
-                document.getElementById('shopAddress').value = s.shop_address || '';
-            }
-        });
-
-        // Update Shop Settings
-        document.getElementById('shopSettingsForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('saveShopBtn');
-            btn.disabled = true;
-            btn.innerText = 'Saving...';
-
-            try {
-                await db.collection('settings').doc('shop').set({
-                    shop_name: document.getElementById('shopName').value,
-                    contact_number: document.getElementById('contactNumber').value,
-                    email_address: document.getElementById('emailAddress').value,
-                    shop_address: document.getElementById('shopAddress').value
-                }, { merge: true });
-                showSuccess('Shop information updated successfully!');
-            } catch (err) {
-                showError('Error: ' + err.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerText = 'Save Shop Profile';
-            }
+        // --- Change Password (inside the modal) ---
+        const passwordError = document.getElementById('passwordModalError');
+        const showPasswordError = (msg) => {
+            passwordError.innerText = msg;
+            passwordError.style.display = 'block';
         };
 
-        // Change Password
         document.getElementById('changePasswordForm').onsubmit = async (e) => {
             e.preventDefault();
+            passwordError.style.display = 'none';
             const btn = document.getElementById('changePasswordBtn');
             const pass = document.getElementById('newPassword').value;
             const confirmPass = document.getElementById('confirmNewPassword').value;
 
             if (pass.length < 6) {
-                showError('Password must be at least 6 characters.');
+                showPasswordError('Password must be at least 6 characters.');
                 return;
             }
             if (pass !== confirmPass) {
-                showError('Passwords do not match.');
+                showPasswordError('Passwords do not match.');
                 return;
             }
 
@@ -366,10 +423,15 @@ include 'templates/header.php';
                 const user = window.auth.currentUser;
                 if (!user) throw new Error('No user is currently logged in via Firebase Auth.');
                 await user.updatePassword(pass);
+                closeBloomModal('passwordModal');
                 showSuccess('Password updated successfully!');
-                document.getElementById('changePasswordForm').reset();
             } catch (err) {
-                showError('Error: ' + err.message);
+                if (err.code === 'auth/requires-recent-login') {
+                    // Firebase requires a fresh login before sensitive changes.
+                    showPasswordError('For security, please log out and log back in, then try changing your password again.');
+                } else {
+                    showPasswordError('Error: ' + err.message);
+                }
             } finally {
                 btn.disabled = false;
                 btn.innerText = 'Update Password';
@@ -378,9 +440,7 @@ include 'templates/header.php';
         <?php endif; ?>
 
         // --- FAQ: list is visible to everyone who can open this page;
-        // the add-form only renders server-side (see $canManageShop
-        // check in the PHP above) for admin/super-admin, so a plain
-        // staff account never even sees the inputs, only the list. ---
+        // the add-form only renders server-side for admin/super-admin. ---
         const faqList = document.getElementById('faqList');
         db.collection('faqs').orderBy('createdAt', 'asc').onSnapshot(snap => {
             if (snap.empty) {
@@ -439,8 +499,14 @@ include 'templates/header.php';
     // Close a modal when clicking its dark overlay (outside the card itself)
     document.querySelectorAll('.bloom-modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) overlay.classList.remove('open');
+            if (e.target === overlay) closeBloomModal(overlay.id);
         });
+    });
+
+    // Close any open modal with the Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        document.querySelectorAll('.bloom-modal-overlay.open').forEach(overlay => closeBloomModal(overlay.id));
     });
 
     function escapeHtml(str) {

@@ -22,44 +22,52 @@ include 'templates/header.php';
 
 <style>
     .kiri-content { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
-    .kiri-card { background: white; border-radius: 28px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; }
+    .kiri-card { background: var(--surface); border-radius: 28px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); }
     .kiri-label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; margin-bottom: 10px; display: block; letter-spacing: 1.5px; }
-    .kiri-select, .kiri-input { width: 100%; padding: 15px 18px; border: 1px solid #f0f0f0; border-radius: 15px; outline: none; font-size: 0.9rem; background: #fafafa; font-weight: 600; }
-    .kiri-dropzone { border: 2px dashed #e5e5e5; border-radius: 20px; padding: 40px 20px; text-align: center; cursor: pointer; transition: 0.3s; background: #fafafa; }
+    .kiri-select, .kiri-input { width: 100%; padding: 15px 18px; border: 1px solid var(--border-color); border-radius: 15px; outline: none; font-size: 0.9rem; background: var(--surface-alt); color: var(--text-main); font-weight: 600; }
+    .kiri-dropzone { border: 2px dashed #e5e5e5; border-radius: 20px; padding: 40px 20px; text-align: center; cursor: pointer; transition: 0.3s; background: var(--surface-alt); }
     .kiri-dropzone:hover { border-color: var(--primary); background: #fff9f0; }
     .kiri-status { font-size: 0.8rem; color: var(--text-light); text-align: center; margin-top: 12px; font-weight: 600; }
-    .kiri-history-item { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 16px; background: #fafafa; margin-bottom: 8px; border: 1px solid #f0f0f0; }
+    .kiri-history-item { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 16px; background: var(--surface-alt); margin-bottom: 8px; border: 1px solid var(--border-color); }
+    .kiri-history-url { font-size: 0.7rem; color: #3b82f6; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    /* NEW: side-by-side layout for the input card + preview card.
-       Falls back to a single stacked column below 900px so this
-       doesn't get cramped on a tablet-or-narrower screen -- there was
-       no such breakpoint before, since the two cards simply stacked
-       vertically by default. */
+    /* Side-by-side layout for the input card + preview card; stacks
+       into one column below 900px. */
     .kiri-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
     @media (max-width: 900px) {
         .kiri-grid { grid-template-columns: 1fr; }
     }
 
-    /* CHANGED: was a solid black box (#111). Now white, with a subtle
-       border so an all-white .glb model (common for uploaded product
-       shots) still has a visible edge to sit inside, the same way the
-       surrounding kiri-card already has a border against the page's
-       off-white background. */
+    /* Preview box: white in light mode (as requested earlier), with a
+       subtle border so an all-white .glb model still has a visible edge.
+       In dark mode it follows the page surface instead (see below). */
     .kiri-preview-box {
         height: 420px;
         border-radius: 20px;
         overflow: hidden;
-        background: #ffffff;
-        border: 1px solid #f0f0f0;
+        background: var(--surface);
+        border: 1px solid var(--border-color);
         display: flex;
         align-items: center;
         justify-content: center;
     }
-    /* CHANGED: placeholder icon/text recolored for a white background
-       -- the old light-gray-on-black combination would be nearly
-       invisible here. */
     .kiri-preview-placeholder { color: #b0b0b0; text-align: center; font-size: 0.8rem; }
     .kiri-preview-placeholder i { color: #d0d0d0; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+    html[data-theme="dark"] .kiri-card { box-shadow: none; }
+    html[data-theme="dark"] .kiri-dropzone { border-color: var(--border-color); }
+    html[data-theme="dark"] .kiri-dropzone:hover { border-color: var(--primary); background: rgba(245, 158, 11, 0.08); }
+    html[data-theme="dark"] .kiri-select { color-scheme: dark; }
+    html[data-theme="dark"] .kiri-preview-box { background: var(--surface-alt); }
+    html[data-theme="dark"] .kiri-preview-placeholder,
+    html[data-theme="dark"] .kiri-preview-placeholder i { color: var(--text-light); }
+    html[data-theme="dark"] .kiri-history-url { color: #93c5fd; }
+
+    /* Tailwind class remap, scoped to this page's content */
+    html[data-theme="dark"] .kiri-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .kiri-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
 </style>
 
 <main class="kiri-content">
@@ -68,9 +76,6 @@ include 'templates/header.php';
         <p class="text-gray-400 text-sm font-medium mt-1">Generate a realistic 3D model for an existing product from a reference photo.</p>
     </div>
 
-    <!-- CHANGED: input card and preview card are now the two direct
-         children of .kiri-grid, side by side, instead of stacked one
-         after another with their own separate margin-bottom. -->
     <div class="kiri-grid mb-8">
         <div class="kiri-card">
             <label class="kiri-label">1. Select Product from Inventory</label>
@@ -219,10 +224,8 @@ include 'templates/header.php';
             const glbUrl = downloadResult.url;
 
             // --- Save: attach the model to the selected product, and
-            // log the generation -- same two writes InventoryData.
-            // saveTripoModel() + the product's own model field do on
-            // mobile, just performed here via the admin's own signed-in
-            // Firestore session (same as every other write on this page). ---
+            // log the generation -- same two writes the mobile app does,
+            // performed via the admin's own signed-in Firestore session. ---
             await getBranchPath('inventory').doc(productId).update({
                 model: glbUrl,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -262,7 +265,7 @@ include 'templates/header.php';
                     <i class="fa-solid fa-cube text-[var(--primary)]"></i>
                     <div style="flex:1; min-width:0;">
                         <p style="font-weight:700; font-size:0.8rem; margin:0;">${d.name || 'Generated Model'}</p>
-                        <p style="font-size:0.7rem; color:#3b82f6; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${d.url || ''}</p>
+                        <p class="kiri-history-url">${d.url || ''}</p>
                     </div>
                     <button onclick="window.__previewFromHistory('${(d.url || '').replace(/'/g, "\\'")}')"
                         style="background:none; border:none; color:#999; cursor:pointer;" title="Preview">
@@ -271,6 +274,11 @@ include 'templates/header.php';
                 </div>
             `;
         }).join('');
+    }, err => {
+        // Shown on the page, so a rules/permission problem is visible
+        // instead of the list silently staying on "Loading history...".
+        document.getElementById('historyList').innerHTML =
+            `<p class="text-xs text-red-400 py-4 text-center">Could not load history: ${err.message}</p>`;
     });
 
     window.__previewFromHistory = (url) => { if (url) showPreview(url); };

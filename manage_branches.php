@@ -1,5 +1,10 @@
 <?php
-session_start();
+/**
+ * BLOOMINOUS - Manage Branches
+ */
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!isset($_SESSION['admin_id'])) {
     header("Location: index.php");
     exit();
@@ -7,13 +12,47 @@ if (!isset($_SESSION['admin_id'])) {
 include 'templates/header.php';
 ?>
 
-<div class="max-w-7xl mx-auto px-6 py-8">
+<style>
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>.
+       .card (the branch cards) already follows the theme via header.php;
+       these rules cover the Tailwind classes on this page and its modal.
+       :is() lists the page and the modal once -- the modal sits outside
+       the page wrapper in the HTML. */
+    html[data-theme="dark"] :is(.branches-content, #modalContent) :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] :is(.branches-content, #modalContent) :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] :is(.branches-content, #modalContent) .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] :is(.branches-content, #modalContent) :is(.bg-gray-50, .bg-gray-100) { background-color: var(--surface-alt); }
+    html[data-theme="dark"] :is(.branches-content, #modalContent) :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
+    html[data-theme="dark"] #modalContent :is(input, select) { color: var(--text-main); color-scheme: dark; }
+    html[data-theme="dark"] #modalContent input:disabled { opacity: 0.6; }
+
+    /* Pale pink chips -> translucent pink tints */
+    html[data-theme="dark"] .branches-content .bg-pink-50 { background-color: rgba(236, 72, 153, 0.14); }
+    html[data-theme="dark"] .branches-content .border-pink-50 { border-color: rgba(236, 72, 153, 0.25); }
+    html[data-theme="dark"] .branches-content .text-pink-200 { color: rgba(236, 72, 153, 0.55); }
+
+    /* Hover states must be re-declared: the dark "at rest" rules above
+       are more specific than Tailwind's hover classes and would block them. */
+    html[data-theme="dark"] .branches-content .hover\:bg-indigo-50:hover { background-color: rgba(99, 102, 241, 0.18); }
+    html[data-theme="dark"] .branches-content .hover\:bg-pink-50:hover { background-color: rgba(236, 72, 153, 0.18); }
+    html[data-theme="dark"] .branches-content .hover\:text-indigo-500:hover { color: #818cf8; }
+    html[data-theme="dark"] .branches-content .hover\:text-pink-500:hover { color: #f472b6; }
+    html[data-theme="dark"] #modalContent .hover\:bg-gray-200:hover { background-color: var(--border-color); }
+    html[data-theme="dark"] #modalContent .hover\:text-pink-500:hover { color: #f472b6; }
+
+    /* Soft pink glow under the Add button looks like a smudge on dark */
+    html[data-theme="dark"] .branches-content .shadow-pink-200\/50 { box-shadow: none; }
+    html[data-theme="dark"] #modalContent { box-shadow: none; }
+</style>
+
+<div class="branches-content max-w-7xl mx-auto px-6 py-8">
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-16 gap-8">
         <div>
             <h1 class="brand-font text-6xl font-black text-gray-800 tracking-tight">Manage Branches</h1>
             <p class="text-gray-400 text-sm mt-1 font-medium italic">Manage flower shop branches and operational status.</p>
         </div>
-        <button onclick="openModal()" class="btn-primary shadow-2xl shadow-pink-200/50 flex items-center px-10 py-4 rounded-3xl font-black text-xs uppercase tracking-[0.2em] transform hover:-translate-y-1 transition-all">
+        <button onclick="openAddModal()" class="btn-primary shadow-2xl shadow-pink-200/50 flex items-center px-10 py-4 rounded-3xl font-black text-xs uppercase tracking-[0.2em] transform hover:-translate-y-1 transition-all">
             <i class="fa-solid fa-plus-circle mr-3 text-lg"></i>
             <span>Add New Branch</span>
         </button>
@@ -29,12 +68,12 @@ include 'templates/header.php';
     </div>
 </div>
 
-<!-- Add Branch Modal -->
+<!-- Add / Edit Branch Modal -->
 <div id="addModal" class="fixed inset-0 bg-black/40 backdrop-blur-md hidden z-[300] flex items-center justify-center p-4">
     <div class="bg-white rounded-[35px] w-full max-w-md shadow-2xl overflow-hidden scale-95 opacity-0 transition-all duration-300 transform border border-gray-100" id="modalContent">
         <div class="p-10">
             <div class="flex justify-between items-center mb-8">
-                <h2 class="brand-font text-3xl font-black text-gray-800">New Branch</h2>
+                <h2 class="brand-font text-3xl font-black text-gray-800" id="modalTitle">New Branch</h2>
                 <button onclick="closeModal()" class="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:text-pink-500 transition-colors">
                     <i class="fa-solid fa-times"></i>
                 </button>
@@ -68,7 +107,7 @@ include 'templates/header.php';
 
                 <div class="pt-6 flex gap-4">
                     <button type="button" onclick="closeModal()" class="flex-1 px-6 py-4 rounded-2xl font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-all text-sm">Cancel</button>
-                    <button type="submit" class="flex-[2] btn-primary justify-center py-4 text-sm">Create Store Space</button>
+                    <button type="submit" id="branchSubmitBtn" class="flex-[2] btn-primary justify-center py-4 text-sm">Create Store Space</button>
                 </div>
             </form>
         </div>
@@ -80,6 +119,27 @@ include 'templates/header.php';
     const addModal = document.getElementById('addModal');
     const modalContent = document.getElementById('modalContent');
     const branchForm = document.getElementById('branchForm');
+    const modalTitle = document.getElementById('modalTitle');
+    const submitBtn = document.getElementById('branchSubmitBtn');
+    const branchIdInput = document.getElementById('branchId');
+
+    // Latest branch data, keyed by id. Edit reads from here instead of
+    // having the name/address pasted into the HTML -- that pasting broke
+    // on any name containing an apostrophe (e.g. "Rose's Garden").
+    let branchCache = {};
+
+    // null = the modal is in "add" mode; a branch id = "editing that branch".
+    // One variable decides the mode, so the modal can't get stuck halfway.
+    let editingBranchId = null;
+
+    // Puts the modal back into a clean "Add New Branch" state.
+    function resetModalToAddMode() {
+        editingBranchId = null;
+        branchForm.reset();
+        branchIdInput.disabled = false;
+        modalTitle.innerText = 'New Branch';
+        submitBtn.innerText = 'Create Store Space';
+    }
 
     function openModal() {
         addModal.classList.remove('hidden');
@@ -88,15 +148,25 @@ include 'templates/header.php';
         }, 10);
     }
 
+    function openAddModal() {
+        resetModalToAddMode();
+        openModal();
+    }
+
+    // FIX: closing the modal (Cancel, X, or after saving) ALWAYS resets it,
+    // so a cancelled Edit can never leak into the next "Add New Branch".
     function closeModal() {
         modalContent.classList.add('scale-95', 'opacity-0');
         setTimeout(() => {
             addModal.classList.add('hidden');
+            resetModalToAddMode();
         }, 300);
     }
 
     // Load Branches Real-time
     db.collection('branches').onSnapshot(snap => {
+        branchCache = {};
+
         if (snap.empty) {
             branchList.innerHTML = `
                 <div class="col-span-full py-20 text-center bg-white rounded-[35px] border-2 border-dashed border-pink-50">
@@ -114,6 +184,7 @@ include 'templates/header.php';
         snap.forEach(doc => {
             const data = doc.data();
             const id = doc.id;
+            branchCache[id] = data;
             html += `
                 <div class="card p-8 group relative">
                     <div class="flex justify-between items-start mb-6">
@@ -121,10 +192,10 @@ include 'templates/header.php';
                             <i class="fa-solid fa-store text-2xl"></i>
                         </div>
                         <div class="flex gap-2">
-                            <button onclick="editBranch('${id}', '${data.name || ''}', '${data.location || ''}', ${data.latitude || 0}, ${data.longitude || 0})" class="w-8 h-8 rounded-lg bg-gray-50 text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                            <button onclick="editBranch('${id}')" title="Edit branch" class="w-8 h-8 rounded-lg bg-gray-50 text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
                                 <i class="fa-solid fa-pen-to-square text-sm"></i>
                             </button>
-                            <button onclick="deleteBranch('${id}')" class="w-8 h-8 rounded-lg bg-gray-50 text-gray-300 hover:text-pink-500 hover:bg-pink-50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                            <button onclick="deleteBranch('${id}')" title="Delete branch" class="w-8 h-8 rounded-lg bg-gray-50 text-gray-300 hover:text-pink-500 hover:bg-pink-50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
                                 <i class="fa-solid fa-trash-can text-sm"></i>
                             </button>
                         </div>
@@ -153,76 +224,68 @@ include 'templates/header.php';
         branchList.innerHTML = html;
     });
 
-    function editBranch(id, name, location, lat, lng) {
-        document.getElementById('branchName').value = name;
-        document.getElementById('branchId').value = id;
-        document.getElementById('branchId').disabled = true;
-        document.getElementById('branchLocation').value = location;
-        document.getElementById('branchLat').value = lat;
-        document.getElementById('branchLng').value = lng;
-        
-        const modalTitle = modalContent.querySelector('h2');
-        modalTitle.innerText = "Edit Branch Node";
-        
-        const submitBtn = branchForm.querySelector('button[type="submit"]');
-        submitBtn.innerText = "Update Regional Node";
-        submitBtn.onclick = async (e) => {
-            e.preventDefault();
-            const bName = document.getElementById('branchName').value;
-            const bLoc = document.getElementById('branchLocation').value;
-            const bLat = parseFloat(document.getElementById('branchLat').value) || 0;
-            const bLng = parseFloat(document.getElementById('branchLng').value) || 0;
-            
-            try {
-                await db.collection('branches').doc(id).update({
+    // Opens the modal in "edit" mode, filled from the cached branch data.
+    function editBranch(id) {
+        const data = branchCache[id];
+        if (!data) {
+            alert('This branch could not be found. It may have just been deleted.');
+            return;
+        }
+
+        editingBranchId = id;
+        document.getElementById('branchName').value = data.name || '';
+        branchIdInput.value = id;
+        branchIdInput.disabled = true;
+        document.getElementById('branchLocation').value = data.location || '';
+        document.getElementById('branchLat').value = data.latitude || 0;
+        document.getElementById('branchLng').value = data.longitude || 0;
+
+        modalTitle.innerText = 'Edit Branch Node';
+        submitBtn.innerText = 'Update Regional Node';
+        openModal();
+    }
+
+    // One submit handler for both modes -- editingBranchId decides which.
+    branchForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const bName = document.getElementById('branchName').value;
+        const bLoc = document.getElementById('branchLocation').value;
+        const bLat = parseFloat(document.getElementById('branchLat').value) || 0;
+        const bLng = parseFloat(document.getElementById('branchLng').value) || 0;
+
+        submitBtn.disabled = true;
+        try {
+            if (editingBranchId) {
+                // --- EDIT an existing branch ---
+                await db.collection('branches').doc(editingBranchId).update({
                     name: bName,
                     location: bLoc,
                     latitude: bLat,
                     longitude: bLng
                 });
-                closeModal();
-                // Reset form for next use
-                document.getElementById('branchId').disabled = false;
-                modalTitle.innerText = "New Branch";
-                submitBtn.innerText = "Create Store Space";
-                submitBtn.onclick = null; 
-                branchForm.reset();
-            } catch (e) {
-                alert('Update failed: ' + e.message);
+            } else {
+                // --- CREATE a new branch ---
+                const bId = branchIdInput.value.toLowerCase().replace(/\s+/g, '_');
+
+                const existing = await db.collection('branches').doc(bId).get();
+                if (existing.exists) {
+                    alert('Branch ID already exists! Please use a different one.');
+                    return;
+                }
+
+                await db.collection('branches').doc(bId).set({
+                    name: bName,
+                    location: bLoc,
+                    latitude: bLat,
+                    longitude: bLng,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
             }
-        };
-
-        openModal();
-    }
-
-    branchForm.onsubmit = async (e) => {
-        e.preventDefault();
-        const bName = document.getElementById('branchName').value;
-        const bId = document.getElementById('branchId').value.toLowerCase().replace(/\s+/g, '_');
-        const bLoc = document.getElementById('branchLocation').value;
-        const bLat = parseFloat(document.getElementById('branchLat').value) || 0;
-        const bLng = parseFloat(document.getElementById('branchLng').value) || 0;
-
-        try {
-            // Check if already exists
-            const existing = await db.collection('branches').doc(bId).get();
-            if (existing.exists) {
-                alert('Branch ID already exists! Please use a different one.');
-                return;
-            }
-
-            await db.collection('branches').doc(bId).set({
-                name: bName,
-                location: bLoc,
-                latitude: bLat,
-                longitude: bLng,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
             closeModal();
-            branchForm.reset();
         } catch (error) {
-            alert('Error creating branch: ' + error.message);
+            alert((editingBranchId ? 'Update failed: ' : 'Error creating branch: ') + error.message);
+        } finally {
+            submitBtn.disabled = false;
         }
     };
 

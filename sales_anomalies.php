@@ -14,13 +14,15 @@ include 'templates/header.php';
     .risk-low { background: #e8f8f0; color: #14532d; border: 1px solid #bbf7d0; }
     .risk-medium { background: #fffbeb; color: #78350f; border: 1px solid #fef3c7; }
     .risk-critical { background: #fef2f2; color: #7f1d1d; border: 1px solid #fee2e2; }
-    .anomaly-card { background: white; border: 1px solid #f0f0f0; padding: 1.75rem 2rem; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.01); margin-bottom: 16px; }
+    .anomaly-card { background: var(--surface); border: 1px solid var(--border-color); padding: 1.75rem 2rem; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.01); margin-bottom: 16px; }
     .type-pill { font-size: 0.65rem; font-weight: 800; color: #6b7280; background: #f3f4f6; padding: 4px 10px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .filter-btn { padding: 8px 18px; border-radius: 20px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; border: 1px solid #f0f0f0; background: #fff; color: #999; cursor: pointer; transition: 0.2s; }
+    .filter-btn { padding: 8px 18px; border-radius: 20px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; border: 1px solid var(--border-color); background: var(--surface); color: #999; cursor: pointer; transition: 0.2s; }
     .filter-btn.active { background: #111827; color: #fff; border-color: #111827; }
-    .config-input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #f0f0f0; background: #fafafa; font-weight: 700; font-size: 0.85rem; outline: none; }
-    .config-input:focus { border-color: #7380ec; background: #fff; }
+    .config-input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 700; font-size: 0.85rem; outline: none; }
+    .config-input:focus { border-color: #7380ec; background: var(--surface); }
     .config-label { display: flex; align-items: center; gap: 6px; font-size: 0.62rem; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    /* Detection Settings panel (was an inline style="" on the div) */
+    .config-panel { background: var(--surface); padding: 2.5rem; border-radius: 30px; margin-top: 3rem; border: 1px dashed #ddd; }
 
     /* --- Plain-language tooltip ("?" circle) --- */
     .info-tip {
@@ -43,8 +45,37 @@ include 'templates/header.php';
     .info-tip:hover .info-tip-bubble, .info-tip:focus .info-tip-bubble { display: block; }
     .config-section-title { grid-column: 1 / -1; font-size: 0.7rem; font-weight: 900; color: #7380ec; text-transform: uppercase; letter-spacing: 1px; margin: 18px 0 4px; }
     .config-section-title:first-child { margin-top: 0; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+
+    /* 1) Page-specific colors with no matching theme variable */
+    html[data-theme="dark"] .type-pill { background: var(--surface-alt); color: var(--text-light); }
+    html[data-theme="dark"] .filter-btn { color: var(--text-light); }
+    /* The near-black "active" pill would vanish on a dark page, so it
+       inverts instead: light pill, dark text. */
+    html[data-theme="dark"] .filter-btn.active { background: var(--text-main); color: var(--background); border-color: var(--text-main); }
+    html[data-theme="dark"] .config-panel { border-color: var(--border-color); }
+    html[data-theme="dark"] .config-label { color: var(--text-light); }
+    html[data-theme="dark"] .config-input { color-scheme: dark; }
+    html[data-theme="dark"] .info-tip { background: var(--border-color); color: var(--text-light); }
+    html[data-theme="dark"] .info-tip .info-tip-bubble { border: 1px solid var(--border-color); }
+    html[data-theme="dark"] .anomaly-card { box-shadow: none; }
+
+    /* 2) Severity badges: translucent tints instead of pale stickers */
+    html[data-theme="dark"] .risk-low { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
+    html[data-theme="dark"] .risk-medium { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
+    html[data-theme="dark"] .risk-critical { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); }
+
+    /* 3) Tailwind class remap, scoped to this page's content */
+    html[data-theme="dark"] .anomaly-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .anomaly-content :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .anomaly-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .anomaly-content :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
+    html[data-theme="dark"] .anomaly-content .text-amber-700 { color: #fbbf24; }
+    html[data-theme="dark"] .anomaly-content .text-red-700 { color: #f87171; }
 </style>
-<main style="padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
+<main class="anomaly-content" style="padding: 1.5rem; max-width: 1200px; margin: 0 auto;">
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
         <div>
             <h1 class="brand-font text-5xl font-black text-gray-800">Sales Anomalies Detection</h1>
@@ -85,7 +116,7 @@ include 'templates/header.php';
 
     <?php if ($isAdminUser): ?>
     <!-- Threshold Configuration (admin/super-admin only) -->
-    <div style="background:white; padding:2.5rem; border-radius:30px; margin-top:3rem; border:1px dashed #ddd;">
+    <div class="config-panel">
         <h4 class="brand-font text-2xl font-black mb-2 text-gray-800">Detection Settings</h4>
         <p class="text-xs text-gray-400 font-medium mb-8">Changes apply immediately to every branch — no redeploy needed. Hover the <span class="info-tip">?</span> next to any setting for its definition.</p>
         <form id="anomalyConfigForm" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:20px;">
@@ -293,8 +324,7 @@ include 'templates/header.php';
 
         // Pulls the latest saved values from Firestore and fills the form.
         // Used both on page load AND right after a save, so "what you see
-        // in the boxes" always reflects what's actually stored — never
-        // just what you last typed.
+        // in the boxes" always reflects what's actually stored.
         async function loadConfigIntoForm() {
             if (!AnomalyEngine) {
                 console.error('SalesAnomalies engine did not load — check the <script src> path in footer.php.');
@@ -341,8 +371,8 @@ include 'templates/header.php';
 
                 if (AnomalyEngine) AnomalyEngine.invalidateConfigCache();
 
-                // The real proof: re-pull from Firestore and refill the
-                // boxes with what's ACTUALLY stored, not what we just typed.
+                // Re-pull from Firestore and refill the boxes with what's
+                // ACTUALLY stored, not what we just typed.
                 await loadConfigIntoForm();
 
                 // Show the badge, then fade it out after 3 seconds.

@@ -17,23 +17,23 @@ include 'templates/header.php';
 <style>
     .order-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-    .stat-card { background: #fff; padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid #f0f0f0; }
+    .stat-card { background: var(--surface); padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-color); }
     .stat-card i { font-size: 1.5rem; width: 65px; height: 65px; border-radius: 20px; display: flex; align-items: center; justify-content: center; }
     .pink-bg { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
     .indigo-bg { background: rgba(123, 121, 242, 0.1); color: var(--secondary); }
     .teal-bg { background: rgba(0, 206, 209, 0.1); color: #00ced1; }
-    .list-card { background: #fff; border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
+    .list-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
     #orderTable { width: 100%; border-collapse: collapse; }
-    #orderTable th { text-align: left; padding: 25px 20px; color: var(--text-light); border-bottom: 1px solid #f0f0f0; text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; background: #fafafa; }
+    #orderTable th { text-align: left; padding: 25px 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; background: var(--surface-alt); }
     #orderTable td { padding: 20px; border-bottom: 1px solid #f8f9fa; color: var(--text-main); font-size: 0.9rem; font-weight: 500; }
     .customer-avatar { width: 45px; height: 45px; background: #fff5f8; color: var(--primary); border: 1px solid rgba(233, 30, 99, 0.1); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; font-family: 'Cormorant Garamond', serif; }
-    .status-select { padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid #f0f0f0; background: #fafafa; outline: none; cursor: pointer; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; transition: 0.3s; }
-    .status-select:focus { border-color: var(--primary); background: #fff; }
+    .status-select { padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid var(--border-color); background: var(--surface-alt); outline: none; cursor: pointer; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; transition: 0.3s; }
+    .status-select:focus { border-color: var(--primary); background: var(--surface); }
 
     /* Online / Walk-in channel tabs — this is the split the whole page pivots on now:
        every query, stat, and status-option set below is scoped to whichever tab is active. */
     .channel-tabs { display: flex; gap: 10px; margin-bottom: 2rem; }
-    .channel-tab { padding: 14px 28px; border-radius: 18px; border: 1px solid #f0f0f0; background: #fff; font-weight: 800; font-size: 0.85rem; cursor: pointer; color: var(--text-light); transition: 0.2s; display: flex; align-items: center; gap: 10px; }
+    .channel-tab { padding: 14px 28px; border-radius: 18px; border: 1px solid var(--border-color); background: var(--surface); font-weight: 800; font-size: 0.85rem; cursor: pointer; color: var(--text-light); transition: 0.2s; display: flex; align-items: center; gap: 10px; }
     .channel-tab .count { background: #f5f5f5; color: var(--text-light); padding: 2px 10px; border-radius: 50px; font-size: 0.72rem; }
     .channel-tab.active { border-color: var(--primary); background: rgba(233,30,99,0.06); color: var(--primary); }
     .channel-tab.active .count { background: var(--primary); color: #fff; }
@@ -41,22 +41,47 @@ include 'templates/header.php';
     /* Proof of Delivery capture modal (online order Confirm step) */
     #podCaptureOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
     #podCaptureOverlay.open { display: flex; }
-    #podCaptureModal { background: #fff; border-radius: 30px; padding: 2.5rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
-    #podCaptureModal h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0 0 0.5rem; }
+    #podCaptureModal { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2.5rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #podCaptureModal h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0 0 0.5rem; color: var(--text-main); }
     #podCaptureModal p.pod-sub { color: var(--text-light); font-size: 0.8rem; font-weight: 600; margin-bottom: 1.5rem; }
     .pod-field { margin-bottom: 1.1rem; }
     .pod-field label { display: block; font-size: 0.65rem; font-weight: 800; color: #ccc; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
-    .pod-field input[type="text"] { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid #f0f0f0; background: #fafafa; font-weight: 600; font-size: 0.88rem; outline: none; }
-    .pod-field input[type="text"]:focus { border-color: var(--primary); background: #fff; }
+    .pod-field input[type="text"] { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 600; font-size: 0.88rem; outline: none; }
+    .pod-field input[type="text"]:focus { border-color: var(--primary); background: var(--surface); }
     #podPreviewWrap { display: none; margin-top: 12px; text-align: center; }
-    #podPreviewImg { max-width: 100%; max-height: 220px; border-radius: 14px; border: 1px solid #f0f0f0; }
-    .pod-drop { border: 2px dashed #f0f0f0; border-radius: 18px; padding: 2rem; text-align: center; cursor: pointer; color: var(--text-light); font-weight: 700; font-size: 0.85rem; background: #fafafa; }
+    #podPreviewImg { max-width: 100%; max-height: 220px; border-radius: 14px; border: 1px solid var(--border-color); }
+    .pod-drop { border: 2px dashed var(--border-color); border-radius: 18px; padding: 2rem; text-align: center; cursor: pointer; color: var(--text-light); font-weight: 700; font-size: 0.85rem; background: var(--surface-alt); }
     .pod-drop:hover { border-color: var(--primary); color: var(--primary); }
     #podCaptureError { color: var(--primary); font-size: 0.8rem; font-weight: 700; margin-bottom: 1rem; display: none; }
     .pod-actions { display: flex; gap: 12px; margin-top: 1.5rem; }
     .pod-actions button { flex: 1; padding: 16px; border-radius: 18px; font-weight: 800; border: none; cursor: pointer; }
     .pod-cancel { background: #f5f5f5; color: var(--text-light); }
     .pod-confirm { background: var(--primary); color: #fff; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php has set data-theme="dark" on <html>.
+       1) Colors that have no matching theme variable get a dark value.
+       2) The Tailwind "light" classes used in this page's markup -- and
+          in the order rows that JavaScript builds later -- are recolored,
+          scoped to .order-content so the shared sidebar/topbar are untouched.
+       3) color-scheme: dark makes the browser draw native dropdown
+          menus (the <option> lists) dark too. */
+    html[data-theme="dark"] #orderTable td { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .customer-avatar { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.2); }
+    html[data-theme="dark"] .channel-tab .count,
+    html[data-theme="dark"] .pod-cancel { background: var(--surface-alt); }
+    html[data-theme="dark"] .pod-field label { color: var(--text-light); }
+    html[data-theme="dark"] .stat-card,
+    html[data-theme="dark"] .list-card { box-shadow: none; }
+    html[data-theme="dark"] .status-select { color-scheme: dark; }
+
+    html[data-theme="dark"] .order-content .text-gray-800 { color: var(--text-main); }
+    html[data-theme="dark"] .order-content .text-gray-400,
+    html[data-theme="dark"] .order-content .text-gray-300 { color: var(--text-light); }
+    html[data-theme="dark"] .order-content .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] .order-content .border-gray-100,
+    html[data-theme="dark"] .order-content .border-gray-50 { border-color: var(--border-color); }
+    html[data-theme="dark"] .order-content .bg-gray-50\/30 { background-color: var(--surface-alt); }
 </style>
 
 <main class="order-content">

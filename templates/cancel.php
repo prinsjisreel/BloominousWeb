@@ -1,10 +1,14 @@
 <?php
 /**
  * BLOOMINOUS - Payment Cancel Handler
+ *
+ * PayMongo sends the customer here if they back out of the GCash/Maya page.
+ * The order already exists (paymentStatus 'Pending'), so "Try Again" goes to
+ * checkout.php?resume=1, which offers "Continue Payment" for THAT order
+ * instead of creating a duplicate one. BloominousApp customers (who land
+ * here in the phone browser, signed out) retry from the app instead.
  */
 session_start();
-
-$order_id = $_SESSION['pending_order_id'] ?? null;
 ?>
 
 <!DOCTYPE html>
@@ -22,6 +26,7 @@ $order_id = $_SESSION['pending_order_id'] ?? null;
         .x-icon { width: 80px; height: 80px; background: #ffebee; color: #e74c3c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; margin: 0 auto 30px; }
         .btn-retry { display: inline-block; background: #333; color: #fff; padding: 15px 40px; border-radius: 50px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; margin-top: 30px; transition: 0.3s; }
         .btn-retry:hover { background: #000; transform: scale(1.05); }
+        .btn-secondary { display: inline-block; color: #999; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin-top: 20px; }
     </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-6">
@@ -31,13 +36,24 @@ $order_id = $_SESSION['pending_order_id'] ?? null;
         <i class="fa-solid fa-xmark"></i>
     </div>
     <h1 class="text-3xl font-black text-gray-800 uppercase tracking-tight mb-4">Payment Cancelled</h1>
-    <p class="text-gray-400 mb-8">The payment process was cancelled. No charges were made.</p>
+    <p class="text-gray-400 mb-8">The payment was not completed. No charges were made.</p>
     
     <div class="bg-gray-50 p-6 rounded-2xl text-left mb-8">
-        <p class="text-xs text-gray-500 text-center">If you encountered an error, you can try placing the order again or choose a different payment method.</p>
+        <p class="text-xs text-gray-500 text-center">
+            Your order is saved and waiting for payment. Tap <strong>Try Again</strong> to pay with GCash or Maya — you won't need to re-enter your details.
+        </p>
     </div>
 
-    <a href="checkout.php" class="btn-retry">Try Again</a>
+    <a href="checkout.php?resume=1" class="btn-retry">Try Again</a>
+    <div><a href="my_orders.php" class="btn-secondary">Go to My Orders</a></div>
+
+    <!-- BloominousApp customers land here in the phone's browser, which has
+         no web login — the buttons above would send them to the login page.
+         Their retry lives inside the app instead. -->
+    <p class="text-[11px] text-gray-400 font-semibold mt-8">
+        <i class="fa-solid fa-mobile-screen-button mr-1"></i>
+        Using the Bloominous app? Just switch back to it and tap <strong>Continue Payment</strong>.
+    </p>
 </div>
 
 </body>

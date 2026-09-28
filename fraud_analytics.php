@@ -14,7 +14,7 @@ include 'templates/header.php';
     .risk-high { background: #fef2f2; color: #7f1d1d; border: 1px solid #fee2e2; }     
     .risk-critical { background: #fef2f2; color: #7f1d1d; border: 1px solid #fee2e2; }
     .risk-blocked { background: #111827; color: #ffffff; border: 1px solid #374151; }     
-    .fraud-card { background: white; border: 1px solid #f0f0f0; padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.01); transition: all 0.3s ease; }     
+    .fraud-card { background: var(--surface); border: 1px solid var(--border-color); padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.01); transition: all 0.3s ease; }     
     .telemetry-track { background: #f3f4f6; height: 12px; width: 100%; border-radius: 20px; overflow: hidden; }     
     .telemetry-fill { height: 100%; border-radius: 20px; width: 0%; transition: width 1s ease; }          
     .fill-low { background: linear-gradient(90deg, #10b981, #34d399); }     
@@ -24,10 +24,10 @@ include 'templates/header.php';
     .fill-blocked { background: linear-gradient(90deg, #111827, #4b5563); }     
     .btn-restrict { padding: 6px 14px; border-radius: 20px; font-size: 0.65rem; font-weight: 900; text-transform: uppercase; border: none; cursor: pointer; transition: 0.2s; }
 
-    /* Audit trail block is now a button, not just static text */
+    /* Audit trail block is a button, not just static text */
     .audit-trail-btn {
         width: 100%; text-align: left; cursor: pointer; border: none;
-        background: #f9fafb; padding: 0.75rem; border-radius: 12px; border: 1px solid #f0f0f0;
+        background: #f9fafb; padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border-color);
         font-family: inherit; transition: 0.15s;
     }
     .audit-trail-btn:hover { background: #f3f4f6; border-color: #e5e7eb; }
@@ -36,16 +36,45 @@ include 'templates/header.php';
     /* Fraud History modal */
     #fraudHistoryOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
     #fraudHistoryOverlay.open { display: flex; }
-    #fraudHistoryModal { background: #fff; border-radius: 24px; padding: 2rem; max-width: 640px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #fraudHistoryModal { background: var(--surface); color: var(--text-main); border-radius: 24px; padding: 2rem; max-width: 640px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
     #fraudHistoryModal h3 { font-size: 1.3rem; font-weight: 900; margin: 0 0 0.25rem; }
     #fraudHistoryModal .close-btn { float: right; background: none; border: none; font-size: 1.1rem; color: #999; cursor: pointer; }
-    .fh-order { border: 1px solid #f0f0f0; border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; }
+    .fh-order { border: 1px solid var(--border-color); border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; }
     .fh-order-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 10px; }
     .fh-flags { font-size: 0.78rem; color: #444; line-height: 1.6; }
     .fh-flags li { margin-left: 1.1rem; }
     .fh-empty { text-align: center; color: #bbb; font-style: italic; padding: 2rem; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+
+    /* 1) Page-specific colors with no matching theme variable */
+    html[data-theme="dark"] .telemetry-track { background: var(--surface-alt); }
+    html[data-theme="dark"] .audit-trail-btn { background: var(--surface-alt); }
+    html[data-theme="dark"] .audit-trail-btn:hover { background: var(--background); border-color: var(--text-light); }
+    html[data-theme="dark"] .fh-flags { color: var(--text-secondary); }
+    html[data-theme="dark"] .fh-empty { color: var(--text-light); }
+    html[data-theme="dark"] .fraud-card { box-shadow: none; }
+
+    /* 2) Risk badges: pale "sticker" pills become translucent tints with
+          light text, so they read as status colors instead of glaring. */
+    html[data-theme="dark"] .risk-low { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
+    html[data-theme="dark"] .risk-medium { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
+    html[data-theme="dark"] :is(.risk-high, .risk-critical) { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); }
+    html[data-theme="dark"] .risk-blocked { border-color: #6b7280; }
+
+    /* 3) Tailwind class remap, scoped to this page's content + the history modal */
+    html[data-theme="dark"] :is(.fraud-content, #fraudHistoryModal) :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] :is(.fraud-content, #fraudHistoryModal) :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] :is(.fraud-content, #fraudHistoryModal) .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] :is(.fraud-content, #fraudHistoryModal) :is(.bg-gray-50, .bg-gray-100) { background-color: var(--surface-alt); }
+    html[data-theme="dark"] :is(.fraud-content, #fraudHistoryModal) :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
+    html[data-theme="dark"] .fraud-content .bg-pink-50 { background-color: rgba(236, 72, 153, 0.12); }
+    html[data-theme="dark"] .fraud-content .bg-red-50 { background-color: rgba(239, 68, 68, 0.12); }
+    html[data-theme="dark"] .fraud-content .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.12); }
+    html[data-theme="dark"] .fraud-content .bg-gray-800 { background-color: #4b5563; }
 </style> 
-<main style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">     
+<main class="fraud-content" style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">     
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">         
         <div>             
             <h1 class="brand-font text-5xl font-black text-gray-800">Fraud Risk Analytics</h1>             
@@ -146,24 +175,20 @@ include 'templates/header.php';
     }
 
     /**
-     * NEW — click-through Fraud History.
+     * Click-through Fraud History.
      *
      * FIX (index error): the original version chained
      * .where('user_id','==',uid).orderBy('createdAt','desc') — an equality
      * filter on one field PLUS a sort on a DIFFERENT field. Firestore only
      * auto-creates indexes for a filter and a sort on the SAME field; the
      * moment they're different fields, it demands a manually-created
-     * composite index (that's the console link you saw in the modal).
-     * sales_anomalies.js already hit this exact wall for its own queries
-     * and solved it the same way this now does: drop the orderBy from the
-     * query itself, pull the (small, per-customer) result set, and sort
-     * it in JavaScript instead. No index needed, ever.
+     * composite index. sales_anomalies.js already hit this exact wall for
+     * its own queries and solved it the same way this now does: drop the
+     * orderBy from the query itself, pull the (small, per-customer) result
+     * set, and sort it in JavaScript instead. No index needed, ever.
      *
-     * FIX (privacy): displayName is now ALWAYS the masked name, regardless
-     * of this account's risk tier — the main card may unmask a high-risk
-     * name for the admin's attention, but this detail view stays masked
-     * the same way every other identity-bearing surface in this dashboard
-     * does by default.
+     * FIX (privacy): displayName is ALWAYS the masked name, regardless of
+     * this account's risk tier.
      */
     function openFraudHistory(uid, maskedDisplayName) {
         document.getElementById('fhCustomerName').innerText = 'Fraud History — ' + maskedDisplayName;
@@ -238,11 +263,11 @@ include 'templates/header.php';
             const accountDocs = [];             
             snap.forEach(doc => accountDocs.push({ id: doc.id, ...doc.data() }));             
             
-            // --- THE CRITICAL LOGIC FIX: DESCENT SORT FOR HIGH RISK LEVEL TO RADAR TOP Baseline ---
+            // Highest fraud score sorts to the top of the list
             accountDocs.sort((a, b) => {
                 let scoreA = parseInt(a.fraudScore || 0);
                 let scoreB = parseInt(b.fraudScore || 0);
-                return scoreB - scoreA; // Highest threat vector bubbles up to index zero layout parameters[cite: 1]
+                return scoreB - scoreA;
             });
 
             function renderFraudGrid(filterTerm = '') {                 
@@ -254,11 +279,10 @@ include 'templates/header.php';
                     let rawScore = parseInt(c.fraudScore || 10);                     
                     combinedScores += rawScore;                     
                     
-                    // Prefer the actual riskTier submit_order.php now writes
-                    // (Low/Medium/High/Critical — the same scoring model
-                    // discussed with the shop owner). Accounts that predate
-                    // this change won't have riskTier yet, so fall back to
-                    // the original score-band guess for those only.
+                    // Prefer the actual riskTier submit_order.php writes
+                    // (Low/Medium/High/Critical). Accounts that predate
+                    // this won't have riskTier yet, so fall back to the
+                    // original score-band guess for those only.
                     let riskClass, fillClass, statusLabel;
                     if (c.status === 'blocked' || rawScore >= 100) {
                         riskClass = 'risk-blocked'; fillClass = 'fill-blocked'; statusLabel = 'Permanently Terminated';
@@ -285,9 +309,7 @@ include 'templates/header.php';
                     
                     const isRestricted = c.isRestricted === true;
                     // Always the MASKED name goes into the click handler —
-                    // the History modal is a privacy-sensitive detail view
-                    // and should never reveal the real name, even for
-                    // accounts the main card is currently unmasking.
+                    // the History modal is a privacy-sensitive detail view.
                     const safeMaskedName = maskedName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     html += `                     
                     <div class="fraud-card">                         

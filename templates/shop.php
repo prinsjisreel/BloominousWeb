@@ -1,6 +1,9 @@
 <?php
 /**
  * BLOOMINOUS - Customer Shop Spoke
+ *
+ * Cart storage: Firestore carts/{uid} via window.BloomCart
+ * (assets/script/bloom_cart.js). localStorage is no longer used for the cart.
  */
 session_start();
 
@@ -26,6 +29,8 @@ if (!$user_id) {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <!-- Shared Firestore cart service (must load AFTER the Firebase SDK) -->
+    <script src="../assets/script/bloom_cart.js"></script>
     <style>
         body { font-family: 'Poppins', sans-serif; background-color: #fcf9f2; }
         .shop-container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
@@ -35,6 +40,7 @@ if (!$user_id) {
         .product-info { padding: 20px; }
         .btn-add { width: 100%; padding: 12px; background: #7380ec; color: #fff; border-radius: 12px; font-weight: 800; text-transform: uppercase; font-size: 0.75rem; border: none; cursor: pointer; transition: 0.3s; }
         .btn-add:hover { background: #5a65c1; }
+        .btn-add:disabled { opacity: 0.7; cursor: wait; }
     </style>
 </head>
 <body>
@@ -108,7 +114,10 @@ if (!$user_id) {
         return db.collection('branches').doc(window.currentBranch).collection(collectionName);
     };
 
-    let cart = JSON.parse(localStorage.getItem('bloom_cart') || '{}');
+    // Local MIRROR of the Firestore cart. Never written to directly —
+    // only the live listener in startCartSync() updates it.
+    let cart = {};
+    let unsubscribeCart = null;
     let allProducts = {};
     let userLat = null;
     let userLng = null;
@@ -289,7 +298,7 @@ if (!$user_id) {
                                     ${branchListHtml}
                                 </div>
 
-                                <button onclick="addToCart('${id}')" class="btn-add ${isRecycled ? 'bg-green-600 hover:bg-green-700' : ''}">Add to Cart</button>
+                                <button onclick="addToCart('${id}', this)" class="btn-add ${isRecycled ? 'bg-green-600 hover:bg-green-700' : ''}">Add to Cart</button>
                             </div>
                         </div>
                         `;
@@ -314,43 +323,89 @@ if (!$user_id) {
         firebase.auth().onAuthStateChanged(user => {
             if (user) {
                 loadProducts();
+                startCartSync();
             } else {
+                if (unsubscribeCart) {
+                    unsubscribeCart();
+                    unsubscribeCart = null;
+                }
                 grid.innerHTML = '<div class="col-span-full text-center py-20 text-gray-400 italic">Auth needed. Redirecting to login...</div>';
                 setTimeout(() => window.location.href = '../index.php', 2000);
             }
         });
     });
 
-    function addToCart(id) {
-        if (!cart[id]) {
-            cart[id] = {
-                id: id,
-                name: allProducts[id].name,
-                price: allProducts[id].price,
-                qty: 0
-            };
+    // --- FIRESTORE CART SYNC ---
+    // 1) Moves any old localStorage cart into Firestore (one time only).
+    // 2) Starts a live listener so the badge always reflects carts/{uid}.
+    async function startCartSync() {
+        try {
+            const moved = await BloomCart.migrateLegacy();
+            if (moved > 0) {
+                console.info(`Moved ${moved} item(s) from the old browser cart into your account cart.`);
+            }
+        } catch (err) {
+            // Not fatal: the old key stays in localStorage and we retry next visit.
+            console.warn('Legacy cart migration skipped:', err);
         }
-        cart[id].qty += 1;
-        localStorage.setItem('bloom_cart', JSON.stringify(cart));
-        updateCartUI();
-        
-        const btn = event.target;
+
+        if (unsubscribeCart) unsubscribeCart(); // never stack two listeners
+
+        unsubscribeCart = BloomCart.listen(
+            items => {
+                cart = items;
+                updateCartUI();
+            },
+            () => {
+                document.getElementById('cart-count').innerText = '!';
+            }
+        );
+    }
+
+    async function addToCart(id, btn) {
+        const product = allProducts[id];
+        if (!product) {
+            alert('This product is no longer available. Please refresh the page.');
+            return;
+        }
+
+        // Which branch this exact inventory doc belongs to
+        const branches = product.branches || [];
+        const origin = branches.find(b => b.id === id) || branches[0] || {};
+
         const originalText = btn.innerText;
-        btn.innerText = 'ADDED!';
-        btn.style.background = '#10b981';
-        setTimeout(() => {
-            btn.innerText = originalText;
-            btn.style.background = '#7380ec';
-        }, 1000);
+        btn.disabled = true;
+        btn.innerText = 'ADDING...';
+
+        try {
+            await BloomCart.add({
+                id: id,
+                name: product.name,
+                price: product.price,
+                branchId: origin.branchId,
+                image: product.image
+            });
+            btn.innerText = 'ADDED!';
+            btn.style.background = '#10b981';
+        } catch (err) {
+            console.error('Add to cart failed:', err);
+            btn.innerText = 'FAILED - TRY AGAIN';
+            btn.style.background = '#ef4444';
+        } finally {
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.style.background = ''; // fall back to the CSS class color (keeps recycled buttons green)
+                btn.disabled = false;
+            }, 1000);
+        }
     }
 
     function updateCartUI() {
-        const count = Object.values(cart).reduce((a, b) => a + b.qty, 0);
-        document.getElementById('cart-count').innerText = count;
+        document.getElementById('cart-count').innerText = BloomCart.count(cart);
     }
 
     function toggleCart() {
-        const total = Object.values(cart).reduce((sum, item) => sum + (item.price * item.qty), 0);
+        const total = BloomCart.total(cart);
         window.location.href = 'checkout.php?amount=' + total;
     }
 </script>

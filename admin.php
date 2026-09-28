@@ -32,23 +32,40 @@ include 'templates/header.php';
     .stat-card i { position: absolute; right: -15px; bottom: -15px; font-size: 6rem; opacity: 0.15; color: white; transform: rotate(-15deg); transition: 0.4s; }
     .stat-card:hover i { transform: rotate(0deg) scale(1.1); opacity: 0.25; }
 
-    /* Unified Gradients */
+    /* Unified Gradients (bright brand colors -- identical in both themes) */
     .bloom-pink { background: linear-gradient(135deg, #E91E63, #FF5252); }
     .bloom-indigo { background: linear-gradient(135deg, #7B79F2, #4da3ff); }
     .bloom-teal { background: linear-gradient(135deg, #00ced1, #16a085); }
     .bloom-orange { background: linear-gradient(135deg, #ffb142, #f39c12); }
 
-    /* Analytics Section */
+    /* Analytics Section -- colors read from header.php's theme variables */
     .analytics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; }
-    .chart-box { background: #fff; padding: 3.5rem; border-radius: 35px; border: 1px solid #f0f0f0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); }
+    .chart-box { background: var(--surface); padding: 3.5rem; border-radius: 35px; border: 1px solid var(--border-color); box-shadow: 0 10px 30px rgba(0,0,0,0.02); }
     .chart-box h3 { font-family: 'Cormorant Garamond', serif; font-size: 1.8rem; margin-bottom: 2.5rem; color: var(--text-main); font-weight: 900; }
     
     .chart-row { display: flex; align-items: center; gap: 20px; margin-bottom: 30px; }
     .chart-row span { width: 180px; font-size: 0.8rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+    .chart-qty { font-size: 0.8rem; font-weight: 800; color: var(--text-main); width: 40px; text-align: right; }
     .progress-bar { background: #f8f9fb; height: 10px; width: 100%; border-radius: 10px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 10px; transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1); }
     .pink-bar { background: var(--primary); }
     .indigo-bar { background: var(--secondary); }
+    /* FIX: renderList() has always used 'green-bar' for Best Sellers, but
+       the class was never defined -- so those bars had no color at all. */
+    .green-bar { background: #10B981; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php has set data-theme="dark" on <html>.
+       The Tailwind "light" classes used in this page's markup are
+       recolored here, scoped to <main> so nothing outside this page's
+       content (sidebar, topbar) is affected. */
+    html[data-theme="dark"] main .text-gray-800 { color: var(--text-main); }
+    html[data-theme="dark"] main .text-gray-400 { color: var(--text-light); }
+    html[data-theme="dark"] main .bg-white { background-color: var(--surface); }
+    html[data-theme="dark"] main .border-gray-100 { border-color: var(--border-color); }
+    html[data-theme="dark"] .progress-bar { background: var(--surface-alt); }
+    html[data-theme="dark"] .chart-box { box-shadow: none; }
+    html[data-theme="dark"] .stat-card:hover { box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35); }
 
     @media screen and (max-width: 1200px) { .insights-grid { grid-template-columns: repeat(2, 1fr); } }
     @media screen and (max-width: 768px) { .analytics-grid { grid-template-columns: 1fr; } .insights-grid { grid-template-columns: 1fr; } }
@@ -243,13 +260,16 @@ include 'templates/header.php';
             
             items.forEach(item => {
                 const percentage = (item.qty / maxQty) * 100;
+                // The qty number uses .chart-qty (theme-aware) instead of
+                // the old hardcoded inline color #363949, which was
+                // near-invisible on a dark background.
                 html += `
                     <div class="chart-row">
                         <span>${item.name}</span>
                         <div class="progress-bar">
                             <div class="bar-fill ${barClass}" style="width: ${percentage}%"></div>
                         </div>
-                        <div style="font-size: 0.8rem; font-weight: 800; color: #363949; width: 40px; text-align: right;">${item.qty}</div>
+                        <div class="chart-qty">${item.qty}</div>
                     </div>
                 `;
             });

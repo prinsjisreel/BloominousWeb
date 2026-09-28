@@ -1,4 +1,7 @@
 <?php
+/**
+ * BLOOMINOUS - POS Terminal (walk-in register)
+ */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -14,14 +17,14 @@ include 'templates/header.php';
 
 <style>
     .pos-content { padding: 20px; display: grid; grid-template-columns: 1fr 400px; gap: 20px; height: calc(100vh - 100px); }
-    .product-grid-container { background: #fff; border-radius: 20px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); overflow-y: auto; }
+    .product-grid-container { background: var(--surface); border-radius: 20px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); overflow-y: auto; }
     .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
     .pos-product-card { background: #f8f9fa; border-radius: 15px; padding: 15px; text-align: center; cursor: pointer; transition: 0.3s; border: 2px solid transparent; }
-    .pos-product-card:hover { border-color: #7380ec; background: #fff; transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+    .pos-product-card:hover { border-color: #7380ec; background: var(--surface); transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
     .pos-product-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 10px; margin-bottom: 10px; }
-    .pos-product-card h4 { font-size: 0.9rem; font-weight: 700; color: #363949; margin-bottom: 5px; }
+    .pos-product-card h4 { font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 5px; }
     .pos-product-card p { font-size: 0.85rem; font-weight: 800; color: #7380ec; }
-    .cart-container { background: #fff; border-radius: 20px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+    .cart-container { background: var(--surface); border-radius: 20px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
     .cart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #f1f3f5; padding-bottom: 10px; }
     .cart-items { flex: 1; overflow-y: auto; margin-bottom: 20px; }
     .cart-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #f8f9fa; }
@@ -29,35 +32,73 @@ include 'templates/header.php';
     .cart-item-info h5 { font-size: 0.85rem; font-weight: 700; margin-bottom: 2px; }
     .cart-item-info p { font-size: 0.75rem; color: #b2bec3; }
     .cart-item-qty { display: flex; align-items: center; gap: 10px; }
-    .qty-btn { width: 25px; height: 25px; border-radius: 5px; border: 1px solid #ddd; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; }
+    .qty-btn { width: 25px; height: 25px; border-radius: 5px; border: 1px solid #ddd; background: var(--surface); color: var(--text-main); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; }
     .cart-summary { border-top: 2px dashed #f1f3f5; padding-top: 20px; }
     .summary-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; }
-    .summary-total { font-size: 1.2rem; font-weight: 800; color: #363949; margin-top: 10px; border-top: 1px solid #f1f3f5; padding-top: 10px; }
+    .summary-total { font-size: 1.2rem; font-weight: 800; color: var(--text-main); margin-top: 10px; border-top: 1px solid #f1f3f5; padding-top: 10px; }
     .checkout-btn { background: #7380ec; color: #fff; border: none; padding: 15px; border-radius: 12px; width: 100%; font-weight: 800; cursor: pointer; margin-top: 20px; transition: 0.3s; }
     .checkout-btn:hover { background: #5a65c1; }
+    .checkout-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
     /* Sales Anomaly Gate modal */
     #anomalyOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
     #anomalyOverlay.open { display: flex; }
-    #anomalyModal { background: #fff; border-radius: 24px; padding: 2rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #anomalyModal { background: var(--surface); color: var(--text-main); border-radius: 24px; padding: 2rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
     #anomalyModal h3 { font-size: 1.3rem; font-weight: 900; margin: 0 0 1rem; display: flex; align-items: center; gap: 10px; }
     #anomalyModal h3.severity-medium { color: #b45309; }
     #anomalyModal h3.severity-critical { color: #b91c1c; }
-    #anomalyFlagsList { background: #fafafa; border-radius: 14px; padding: 14px 16px; margin-bottom: 1.1rem; font-size: 0.8rem; color: #444; }
+    #anomalyFlagsList { background: var(--surface-alt); border-radius: 14px; padding: 14px 16px; margin-bottom: 1.1rem; font-size: 0.8rem; color: #444; }
     #anomalyFlagsList div { margin-bottom: 6px; }
     #anomalyFlagsList div:last-child { margin-bottom: 0; }
     .anomaly-field { margin-bottom: 1rem; }
     .anomaly-field label { display: block; font-size: 0.65rem; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
-    .anomaly-field textarea, .anomaly-field input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #f0f0f0; background: #fafafa; font-weight: 600; font-size: 0.85rem; outline: none; box-sizing: border-box; }
-    .anomaly-field textarea:focus, .anomaly-field input:focus { border-color: #7380ec; background: #fff; }
+    .anomaly-field textarea, .anomaly-field input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 600; font-size: 0.85rem; outline: none; box-sizing: border-box; }
+    .anomaly-field textarea:focus, .anomaly-field input:focus { border-color: #7380ec; background: var(--surface); }
     #anomalyError { color: #b91c1c; font-size: 0.78rem; font-weight: 700; margin-bottom: 0.9rem; display: none; }
     .anomaly-actions { display: flex; gap: 12px; margin-top: 0.5rem; }
     .anomaly-actions button { flex: 1; padding: 14px; border-radius: 14px; font-weight: 800; cursor: pointer; border: none; }
     .anomaly-cancel-btn { background: #f5f5f5; color: #888; }
     .anomaly-confirm-btn { background: #7380ec; color: #fff; }
+
+    /* ============ DARK MODE ============
+       Only active when header.php sets data-theme="dark" on <html>. */
+
+    /* 1) Register surfaces, dividers, and cards */
+    html[data-theme="dark"] :is(.product-grid-container, .cart-container) { box-shadow: none; border: 1px solid var(--border-color); }
+    html[data-theme="dark"] .pos-product-card { background: var(--surface-alt); }
+    html[data-theme="dark"] .pos-product-card:hover { background: var(--surface); box-shadow: none; }
+    html[data-theme="dark"] :is(.cart-header, .summary-total) { border-color: var(--border-color); }
+    html[data-theme="dark"] .cart-item { border-bottom-color: var(--border-color); }
+    html[data-theme="dark"] .cart-summary { border-top-color: var(--border-color); }
+    html[data-theme="dark"] .cart-item-info p { color: var(--text-light); }
+    html[data-theme="dark"] .qty-btn { background: var(--surface-alt); border-color: var(--border-color); }
+    html[data-theme="dark"] .pos-product-card p { color: #a5adf5; }
+
+    /* 2) Form fields: these had NO background set, so browsers painted
+          them white by default. Give them the theme's input color. */
+    html[data-theme="dark"] .pos-terminal :is(input, select, textarea) {
+        background-color: var(--surface-alt);
+        color: var(--text-main);
+        border-color: var(--border-color);
+        color-scheme: dark;
+    }
+
+    /* 3) Anomaly modal: warning colors brightened so they stay readable */
+    html[data-theme="dark"] #anomalyModal { box-shadow: none; border: 1px solid var(--border-color); }
+    html[data-theme="dark"] #anomalyModal h3.severity-medium { color: #fbbf24; }
+    html[data-theme="dark"] #anomalyModal h3.severity-critical,
+    html[data-theme="dark"] #anomalyError { color: #f87171; }
+    html[data-theme="dark"] #anomalyFlagsList { color: var(--text-secondary); }
+    html[data-theme="dark"] .anomaly-field label { color: var(--text-light); }
+    html[data-theme="dark"] .anomaly-cancel-btn { background: var(--surface-alt); color: var(--text-light); }
+
+    /* 4) Tailwind class remap, scoped to the terminal */
+    html[data-theme="dark"] .pos-terminal :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
+    html[data-theme="dark"] .pos-terminal :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
+    html[data-theme="dark"] .pos-terminal .hover\:text-gray-600:hover { color: var(--text-main); }
 </style>
 
-<div class="pos-content">
+<div class="pos-content pos-terminal">
     <div class="product-grid-container">
         <div class="flex justify-between items-center mb-6">
             <div class="flex items-center gap-4">
@@ -138,7 +179,7 @@ include 'templates/header.php';
 
 <!-- Sales Anomaly Gate: shown only when a check flags this transaction -->
 <div id="anomalyOverlay">
-    <div id="anomalyModal">
+    <div id="anomalyModal" class="pos-terminal">
         <h3 id="anomalyTitle"><i class="fa-solid fa-triangle-exclamation"></i> Review Required</h3>
         <div id="anomalyFlagsList"></div>
         <div id="anomalyError"></div>
@@ -472,7 +513,7 @@ include 'templates/header.php';
                 total_amount: total,
                 status: 'completed',
                 paymentStatus: 'Paid', // walk-in sales settle immediately at the register
-                payment_method: selectedPaymentMethod, // FIX: was never recorded for POS sales before
+                payment_method: selectedPaymentMethod,
                 orderType: orderType, // 'walkin' | 'bulk_event' — read back by checkValueSpike's baseline query
                 locked: true, // completed invoice — from now on only the Void module may touch it
                 type: 'POS',
@@ -515,7 +556,7 @@ include 'templates/header.php';
             clearCart();
         } catch (error) {
             console.error('Error:', error);
-            alert('An error occurred: ' + error.message);
+            alert('An error occurred: ' + (error.message || error));
         } finally {
             btn.disabled = false;
             btn.innerText = 'Process Transaction';
