@@ -146,3 +146,6 @@ Stack trace:
   thrown in C:\xampp\htdocs\BLOOM\fraud_review.php:52
 2026-10-06T10:49:41+02:00 — FATAL: Since guzzlehttp/psr7 2.11: Passing int to MessageInterface::withHeader() is deprecated; guzzlehttp/psr7 3.0 requires string|string[]. in C:\xampp\htdocs\BLOOM\vendor\symfony\deprecation-contracts\function.php:25
 2026-10-06T10:51:03+02:00 — FATAL: Since guzzlehttp/psr7 2.11: Passing int to MessageInterface::withHeader() is deprecated; guzzlehttp/psr7 3.0 requires string|string[]. in C:\xampp\htdocs\BLOOM\vendor\symfony\deprecation-contracts\function.php:25
+2026-10-06T10:57:05+02:00 — FATAL: Since guzzlehttp/psr7 2.11: Passing int to MessageInterface::withHeader() is deprecated; guzzlehttp/psr7 3.0 requires string|string[]. in C:\xampp\htdocs\BLOOM\vendor\symfony\deprecation-contracts\function.php:25
+2026-10-06T11:54:56+02:00 — FATAL: Since guzzlehttp/psr7 2.11: Passing int to MessageInterface::withHeader() is deprecated; guzzlehttp/psr7 3.0 requires string|string[]. in C:\xampp\htdocs\BLOOM\vendor\symfony\deprecation-contracts\function.php:25
+2026-10-06T11:55:05+02:00 — FATAL: Since guzzlehttp/psr7 2.11: Passing int to MessageInterface::withHeader() is deprecated; guzzlehttp/psr7 3.0 requires string|string[]. in C:\xampp\htdocs\BLOOM\vendor\symfony\deprecation-contracts\function.php:25

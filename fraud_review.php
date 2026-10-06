@@ -36,8 +36,7 @@
  *     is refused (HISTORY_CHANGED) and the admin must review again.
  *
  * ONE RESPONSE PER REQUEST: every reply goes through
- * bloom_review_respond(), which always stops the script afterwards. A
- * second JSON object after the first would make the reply unreadable.
+ * bloom_review_respond(), which always stops the script afterwards.
  *
  * Response codes: RATE_LIMITED, FORBIDDEN, INVALID_REQUEST, NOT_FOUND,
  * INVALID_DECISION, REASON_REQUIRED, HISTORY_CHANGED, NO_EVIDENCE,
@@ -50,6 +49,10 @@
 require_once __DIR__ . '/includes/firestore_rest.php';
 require_once __DIR__ . '/includes/rate_limiter.php';
 require_once __DIR__ . '/includes/fraud_activity.php';
+// bloom_is_valid_doc_id() lives here (shared with submit_order.php).
+// Reused, not copied: a second definition would crash any file that loads
+// both (Cannot redeclare function).
+require_once __DIR__ . '/includes/order_pricing.php';
 
 const BLOOM_REVIEW_LIMIT_WINDOW_SECONDS = 600;
 const BLOOM_REVIEW_LIMIT_PER_IP = 120;
@@ -68,8 +71,7 @@ const BLOOM_REVIEW_FLAG_FALSE_ALARM = 'Reviewed by admin: false alarm';
 const BLOOM_REVIEW_FLAG_RESTRICTION_LIFTED = 'Restriction lifted by admin after review (false alarm)';
 
 /**
- * Sends ONE JSON reply and stops the script, no matter whether the
- * shared bloom_json_response() exits on its own.
+ * Sends ONE JSON reply and stops the script.
  */
 function bloom_review_respond(array $payload, int $status = 200): void
 {
