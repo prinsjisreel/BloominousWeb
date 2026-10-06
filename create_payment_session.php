@@ -3,18 +3,28 @@
  * BLOOMINOUS - Create GCash / Maya Payment Session
  *
  * Called by templates/checkout.php (via assets/script/online_payment.js)
- * RIGHT AFTER submit_order.php has created the order. Also the endpoint the
- * BloominousApp should call — same contract for both platforms:
+ * RIGHT AFTER submit_order.php has created the order, and by BloominousApp
+ * (PaymentService.startOrderPayment) — same contract for both platforms:
  *
  *   POST /create_payment_session.php
  *   Authorization: Bearer <Firebase ID token>
  *   Body: { "orderId": "<Firestore order doc id>", "paymentMethod": "gcash" | "maya" }
  *
  *   200 { success: true,  checkoutUrl, orderId }
- *   4xx { success: false, code?, message }   codes: ALREADY_PAID, ORDER_CLOSED
+ *   4xx { success: false, code?, message }
+ *       codes: ALREADY_PAID, ORDER_CLOSED, RATE_LIMITED
  *
  * The amount charged ALWAYS comes from the order document in Firestore,
- * never from the request body — the browser only says WHICH order.
+ * never from the request body — the client only says WHICH order.
+ *
+ * --- RATE LIMITING (prevention) ---
+ *   0. per IP address, before the token is even verified (cheap flood stop;
+ *      generous because mobile carriers share one IP across many users)
+ *   2. per account (verified uid) — the real limit; can't be faked
+ * Both run BEFORE any PayMongo API call (retrieve or create).
+ * Section 5 (session reuse) is the second line of defense: repeated
+ * clicks for the same order and wallet return the SAME PayMongo page
+ * instead of creating new ones.
  *
  * Uses the REST toolkit (no gRPC), so it works on local XAMPP too.
  */
@@ -23,8 +33,29 @@ require_once __DIR__ . '/includes/firestore_rest.php';
 require_once __DIR__ . '/includes/payment_helper.php';
 require_once __DIR__ . '/includes/rate_limiter.php';
 
+// Rate-limit settings. Window is in seconds (600 = 10 minutes).
+const BLOOM_PAYMENT_LIMIT_WINDOW_SECONDS = 600;
+const BLOOM_PAYMENT_LIMIT_PER_IP = 30;    // shared carrier IPs → keep generous
+const BLOOM_PAYMENT_LIMIT_PER_USER = 10;  // retries + GCash/Maya switching
+
+function bloom_payment_rate_limited_response(): void
+{
+    bloom_json_response([
+        'success' => false,
+        'code' => 'RATE_LIMITED',
+        'message' => 'Too many payment attempts. Please wait a few minutes and try again.',
+    ], 429);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     bloom_json_response(['success' => false, 'message' => 'Method not allowed'], 405);
+}
+
+// --- 0. Per-IP limit — before verifying the token, so floods are turned
+// away as cheaply as possible. (Spoofable via headers without a trusted
+// proxy — which is why section 2's per-account limit is the strict one.)
+if (!bloom_check_and_record_attempt('create_payment_session_ip', bloom_get_client_ip(), BLOOM_PAYMENT_LIMIT_PER_IP, BLOOM_PAYMENT_LIMIT_WINDOW_SECONDS)) {
+    bloom_payment_rate_limited_response();
 }
 
 // --- 1. Who is asking? (same pattern as submit_order.php) ---
@@ -39,10 +70,11 @@ try {
     bloom_json_response(['success' => false, 'message' => 'Invalid or expired session. Please sign in again.'], 401);
 }
 
-// --- 2. Slow down button-mashing / scripted abuse (reuses rate_limiter.php) ---
-// Keyed by uid, not IP: this endpoint is always signed-in.
-if (!bloom_check_and_record_attempt('create_payment_session', $uid, 10, 600)) {
-    bloom_json_response(['success' => false, 'message' => 'Too many payment attempts. Please wait a few minutes.'], 429);
+// --- 2. Per-account limit (reuses rate_limiter.php). The bucket name
+// 'create_payment_session' is unchanged on purpose, so counters that
+// already exist keep working after this update.
+if (!bloom_check_and_record_attempt('create_payment_session', $uid, BLOOM_PAYMENT_LIMIT_PER_USER, BLOOM_PAYMENT_LIMIT_WINDOW_SECONDS)) {
+    bloom_payment_rate_limited_response();
 }
 
 // --- 3. Validate the request body ---

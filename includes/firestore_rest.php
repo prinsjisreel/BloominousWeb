@@ -5,14 +5,15 @@
  * WHY THIS FILE EXISTS: bloom_firestore() (the gRPC FirestoreClient) crashes
  * PHP outright on the local XAMPP install — the browser only sees
  * ERR_CONNECTION_RESET. firebase_admin.php already has REST get / set /
- * equality-query / delete helpers; this file adds the three missing pieces
- * the checkout + payment flow needs, on the same no-gRPC, service-account
- * trust model:
+ * equality-query / delete helpers; this file adds the pieces the checkout
+ * + payment flow needs, on the same no-gRPC, service-account trust model:
  *
- *   bloom_firestore_update_fields_rest()  partial update (like ->update())
- *   bloom_firestore_add_document_rest()   auto-ID create (like ->add())
- *   bloom_firestore_transaction_rest()    read-then-write transaction
- *                                         (like ->runTransaction())
+ *   bloom_firestore_update_fields_rest()        partial update (like ->update())
+ *   bloom_firestore_add_document_rest()         auto-ID create (like ->add())
+ *   bloom_firestore_transaction_rest()          read-then-write transaction
+ *                                               (like ->runTransaction())
+ *   bloom_firestore_get_document_by_path_rest() read a NESTED document, e.g.
+ *                                               branches/{id}/inventory/{id}
  *
  * It reuses bloom_firestore_rest_context() and the decoder from
  * firebase_admin.php, so there is still ONE place that owns credentials.
@@ -97,6 +98,49 @@ function bloom_rest_field_path(string $field): string
         return $field;
     }
     return '`' . str_replace(['\\', '`'], ['\\\\', '\\`'], $field) . '`';
+}
+
+/**
+ * Reads ONE document by its full path, including nested subcollections,
+ * e.g. "branches/main_branch/inventory/abc123". Returns the decoded fields,
+ * or null if the document doesn't exist.
+ *
+ * WHY A NEW HELPER: every other helper here builds its URL with
+ * rawurlencode($collection), which turns the slashes in a nested path into
+ * %2F — Firestore then looks for ONE collection literally named
+ * "branches/main_branch/inventory" and fails. This one encodes each path
+ * segment separately and keeps the slashes between them.
+ */
+function bloom_firestore_get_document_by_path_rest(string $documentPath): ?array
+{
+    $segments = explode('/', trim($documentPath, '/'));
+
+    // A document path is always collection/doc pairs: an EVEN number of parts.
+    if (count($segments) < 2 || count($segments) % 2 !== 0) {
+        throw new \InvalidArgumentException('Not a document path: ' . $documentPath);
+    }
+    foreach ($segments as $segment) {
+        if ($segment === '' || $segment === '.' || $segment === '..') {
+            throw new \InvalidArgumentException('Invalid segment in document path: ' . $documentPath);
+        }
+    }
+
+    [$httpClient, $projectId, $accessToken] = bloom_firestore_rest_context();
+    $url = bloom_rest_documents_url($projectId) . '/' . implode('/', array_map('rawurlencode', $segments));
+
+    try {
+        $response = $httpClient->request('GET', $url, [
+            'headers' => ['Authorization' => 'Bearer ' . $accessToken],
+        ]);
+    } catch (\GuzzleHttp\Exception\ClientException $e) {
+        if ($e->getResponse() && $e->getResponse()->getStatusCode() === 404) {
+            return null;
+        }
+        throw $e;
+    }
+
+    $body = json_decode((string) $response->getBody(), true) ?? [];
+    return bloom_decode_firestore_fields($body['fields'] ?? []);
 }
 
 /**

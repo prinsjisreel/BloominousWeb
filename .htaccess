@@ -5,5 +5,12 @@
     Require all denied
 </Files>
 
+# NEW: When someone opens the bare site root (e.g. http://localhost/bloominousweb/
+# or https://yourdomain.com/) without naming a file, Apache serves the FIRST
+# file from this list that exists. home.php decides where the visitor goes.
+# Any link that names index.php explicitly (all the "please log in" redirects)
+# is NOT affected, so index.php keeps working as the login page.
+DirectoryIndex home.php
+
 RewriteEngine On
 RewriteRule ^verify/?$ verify_email.php [L,QSA]

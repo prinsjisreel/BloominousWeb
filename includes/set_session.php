@@ -30,6 +30,7 @@ register_shutdown_function(function () {
 });
 
 require_once __DIR__ . '/firebase_admin.php';
+require_once __DIR__ . '/fraud_activity.php';
 
 // Keep stray PHP notices OUT of this JSON response body — a warning
 // printed inline here corrupts the response and breaks response.json()
@@ -194,37 +195,26 @@ if ($role === 'customer') {
     }
 
     // --- New-device visibility for flagged accounts (customers only) ------
-    // Previously HARD-BLOCKED login here until the customer solved an
-    // email-code prompt via a native browser prompt() — a second,
-    // separate restriction mechanism from the one already built into
-    // checkout.php's SMS-verification gate and submit_order.php's
-    // RESTRICTED response. Per decision: restriction is now enforced
-    // ONLY at checkout, matching mobile (which never blocked login
-    // either) and giving one consistent place customers experience their
-    // restriction, instead of two different gates behaving two different
-    // ways. A flagged account can now always log in and see its own
-    // profile/restriction status; it still can't complete an order
-    // without the phone-verification step baked into checkout.
+    // Restriction is enforced ONLY at checkout (submit_order.php's
+    // RESTRICTED response + checkout's SMS-verification gate), matching
+    // mobile, which never blocked login either. A flagged account can
+    // always log in and see its own profile/restriction status; it still
+    // can't complete an order without phone verification while restricted.
     //
-    // The signal itself isn't thrown away — it's recorded for admin
-    // visibility instead of used to block the customer.
+    // The signal isn't thrown away — it's recorded as an admin notification.
     //
-    // FIXED: previously wrote via bloom_firestore() (the gRPC client),
-    // wrapped in a try/catch that could not actually protect against
-    // it — this local environment's grpc extension crashes the ENTIRE
-    // PHP process natively the instant a real Firestore connection
-    // opens, which bypasses PHP's exception handling and shutdown
-    // machinery completely (confirmed earlier via
-    // cleanup_plaintext_passwords.php dying with zero output at the
-    // exact same call). Since this block runs for EVERY successful
-    // customer login (not just flagged ones — see the deviceHashes
-    // block below), it explained why customer login specifically
-    // (never admin, which never reaches this code) was failing with
-    // ERR_CONNECTION_RESET. Rewritten to use only the REST-based writer,
-    // which needs no gRPC at all.
+    // FRAUD ACTIVITY MODEL: "flagged" used to mean fraudScore >= 50. Fraud
+    // scoring has been removed, so it now means: restricted, OR at least
+    // one fraud activity recorded on the account. The shared helper in
+    // fraud_activity.php owns that definition (submit_order.php uses the
+    // same one), including a fallback for older accounts that only have a
+    // score from before the change.
+    //
+    // Written via the REST-based writer only — the gRPC client crashes the
+    // entire PHP process natively on this local environment, which is why
+    // customer login once failed with ERR_CONNECTION_RESET.
     if ($fraudCheckData !== null) {
-        $isFlagged = ($fraudCheckData['isRestricted'] ?? false) === true
-            || (int) ($fraudCheckData['fraudScore'] ?? 0) >= 50;
+        $isFlagged = bloom_customer_is_fraud_flagged($fraudCheckData);
         $knownDevices = $fraudCheckData['deviceHashes'] ?? [];
         $isKnownDevice = $deviceHash !== '' && in_array($deviceHash, $knownDevices, true);
 
@@ -233,7 +223,7 @@ if ($role === 'customer') {
                 $notifId = bin2hex(random_bytes(10));
                 bloom_firestore_set_document_rest('notifications', $notifId, [
                     'title' => 'Flagged Account — New Device Login',
-                    'message' => "Account [$uid] ($email) is already flagged (isRestricted or fraudScore >= 50) and just logged in from an unrecognized device.",
+                    'message' => "Account [$uid] ($email) is restricted or has recorded fraud activity, and just logged in from an unrecognized device.",
                     'type' => 'fraud',
                     'branchId' => $branchId,
                     'created_at' => new \DateTimeImmutable('now', new \DateTimeZone('UTC')),
@@ -251,18 +241,12 @@ if ($role === 'customer') {
 // history exists by the time an account does become flagged. Best-effort:
 // never block login over this write failing.
 //
-// FIXED: same gRPC-crash reasoning as above. This block runs for EVERY
-// successful customer login unconditionally, which is exactly why the
-// crash was 100% reproducible on this local environment, not an
-// occasional flagged-account edge case.
-//
 // bloom_firestore_set_document_rest() does a FULL document replace, not
 // a partial update — so the existing document is read first and the new
 // hash merged into it in PHP, then the COMPLETE document (every field,
 // not just deviceHashes) is written back. Skipping this read-merge step
-// and writing only {deviceHashes: [...]} would have silently deleted
-// every other field on the customer's document (name, email, points,
-// fraudScore, everything) on their very next login.
+// and writing only {deviceHashes: [...]} would silently delete every
+// other field on the customer's document on their very next login.
 if ($role === 'customer' && $deviceHash !== '') {
     try {
         $currentCustomerDoc = bloom_firestore_get_document_rest('customers', $uid) ?? [];
@@ -277,18 +261,12 @@ if ($role === 'customer' && $deviceHash !== '') {
     }
 }
 
-// NEW: same device-hash recording as above, now for staff/admin/
-// super-admin/delivery too -- this closes the actual gap being fixed
-// here. Previously device-fingerprint tracking existed ONLY for
-// customers on web, while mobile tracked it (when working) only for
-// staff. Neither platform covered both consistently. This block
-// mirrors the customer block exactly: read-merge-write against the
-// FULL document (never a partial {deviceHashes: [...]} write, which
-// would wipe every other field on next login), targeting
-// 'employees/{uid}' since that's where staff profile data (and, per
-// the mobile-side fix, device history) lives after the users/employees
-// collection split. Also raises the same "Staff Login — New Device"
-// notification mobile's _checkAndTrackDevice() already does, so both
+// Same device-hash recording as above, for staff/admin/super-admin/delivery.
+// Mirrors the customer block exactly: read-merge-write against the FULL
+// document, targeting 'employees/{uid}' since that's where staff profile
+// data (and, per the mobile-side fix, device history) lives after the
+// users/employees collection split. Also raises the same "Staff Login —
+// New Device" notification mobile's _checkAndTrackDevice() does, so both
 // platforms produce the identical notification for the identical event.
 if (in_array($role, ['admin', 'super-admin', 'staff', 'employee', 'delivery'], true) && $deviceHash !== '') {
     try {

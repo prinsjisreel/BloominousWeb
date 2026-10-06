@@ -3,59 +3,135 @@
  * BLOOMINOUS - Server-side Order Submission
  *
  * Replaces the client-side db.collection('orders').add(...) call in
- * templates/checkout.php. All fraud scoring (velocity + geo mismatch) is
- * computed here, against the Admin SDK's view of Firestore, and the
- * resulting fraudScore/isRestricted/fraudFlags/riskTier are written here too.
+ * templates/checkout.php. All fraud CHECKS and all PRICING run here,
+ * against the server's own view of Firestore, so a modified browser or
+ * app can't skip them or change what gets charged.
  *
- * The browser can no longer set its own fraudScore, skip the velocity
- * check, or write straight to `orders`/`customers` — see firestore.rules,
- * which denies client `orders` create entirely and already denied client
- * writes to the fraud fields on `customers`.
+ * The browser can't write straight to `orders`/`customers` fraud fields —
+ * see firestore.rules, which denies client `orders` create entirely and
+ * denies client writes to the fraud fields on `customers`.
  *
  * --- SHARED WEB + APP CONTRACT ---
  * templates/checkout.php (web) and delivery_details_page.dart /
  * order_submission_service.dart (app) both POST here. Section 3a keeps the
  * two platforms consistent: one payment-method vocabulary ('gcash' | 'maya'
  * | 'cod'), no COD on gift orders, and an optional plain-text `notes` field.
+ * Response codes: RESTRICTED, BLOCKED, EMAIL_UNREACHABLE, RATE_LIMITED,
+ * plus the pricing codes from includes/order_pricing.php (EMPTY_CART,
+ * INVALID_ITEM, INVALID_QUANTITY, TOO_MANY_ITEMS, QUANTITY_LIMIT,
+ * PRODUCT_UNAVAILABLE, OUT_OF_STOCK) and INVALID_FEE.
  *
- * --- RISK TIER MODEL (updated) ---
- * Every check below (device, IP, phone, address, velocity, geo) is now
- * PURELY ADDITIVE — it bumps the score and appends a human-readable flag,
- * nothing more. No single one of them can restrict an account by itself
- * anymore. Restriction is decided ONCE, in section 6, from two things only:
- *   (a) hard evidence — a device hash that matches a PRIOR confirmed ban.
- *       That's proof, not a guess, so it can restrict on its own.
- *   (b) the CUMULATIVE score crossing the Critical tier (90+), which by
- *       construction requires several independent soft signals to have
- *       actually converged — a single ambiguous action (like re-ordering
- *       twice in five minutes) can never get there alone.
- * Tiers: Low (0-30) silent log | Medium (31-60) dashboard flag only |
- * High (61-89) logged + watchlisted, order still completes | Critical
- * (90-100) restricted, phone verification required to lift.
+ * --- SERVER-SIDE PRICING (section 3b) ---
+ * Client-sent item prices, names and `subtotal` are NOT trusted. Every
+ * line is priced from its inventory document (includes/order_pricing.php).
+ * The client's `subtotal` is only compared against the real one: if it
+ * claimed LESS, that's recorded as a Payment Fraud activity.
+ *
+ * --- RATE LIMITING (prevention) ---
+ * Sections 0 and 1b cap how often orders can be ATTEMPTED, before any
+ * paid API call, Firestore query, or invoice number is used:
+ *   - per IP address: generous, because mobile carriers put many real
+ *     customers behind one shared IP; stops raw request floods cheaply.
+ *   - per account (verified uid): the real limit; can't be faked, since
+ *     the uid comes from a signed Firebase ID token.
+ * This PREVENTS floods; the velocity check in section 4 DETECTS and
+ * records unusual-but-allowed repeat orders for admin review.
+ *
+ * --- RESTRICTIONS (section 2) ---
+ * A restriction lasts at most BLOOM_RESTRICTION_MAX_DAYS (30) days. While
+ * active, the customer must pass phone OTP to order. Once the 30 days
+ * are over it is treated as expired: no OTP is asked and the account is
+ * unrestricted automatically on its next order (section 6).
+ *
+ * --- FRAUD ACTIVITIES + TRIAGE ---
+ * Each check below answers one yes/no question. Every "yes" is recorded
+ * as a fraud ACTIVITY, tagged with a category from the e-commerce fraud
+ * studies this module is based on (see includes/fraud_activity.php):
+ *   account_takeover | payment_fraud | fake_transaction | malicious_return
+ *
+ * On top of the activities, includes/fraud_activity.php derives:
+ *   - riskLevel (critical/high/medium/low): rule-based, from categories
+ *   - riskScore (0-100): evidence-tiered points per activity code
+ * Both are saved on the ORDER (this order's activities only) and on the
+ * CUSTOMER (whole account history). They decide REVIEW ORDER and how
+ * loud the admin notification is. They NEVER block or restrict anyone,
+ * and they are never sent back to the customer.
+ *
+ * The ORDER STILL GOES THROUGH. Deciding whether an activity is real
+ * fraud is a human decision, made after reviewing the customer's history
+ * in the Fraud Activity Log (fraud_review.php).
+ *
+ * The ONE automatic action left is hard evidence: an order from a device
+ * already banned. That restricts the account at once.
  *
  * --- REST MIGRATION (no gRPC) ---
- * Every Firestore call in this file now goes through the plain REST helpers
+ * Every Firestore call in this file goes through the plain REST helpers
  * (includes/firestore_rest.php + firebase_admin.php's *_rest functions)
  * instead of bloom_firestore(). The gRPC FirestoreClient crashes PHP on the
- * local XAMPP install (browser sees ERR_CONNECTION_RESET), so this is the
- * same fix set_session.php and rate_limiter.php already received. The
- * fraud logic itself is unchanged.
+ * local XAMPP install (browser sees ERR_CONNECTION_RESET).
  */
 
 require_once __DIR__ . '/includes/firestore_rest.php';
+require_once __DIR__ . '/includes/rate_limiter.php';
+require_once __DIR__ . '/includes/fraud_activity.php';
+require_once __DIR__ . '/includes/order_pricing.php';
 require_once __DIR__ . '/includes/abstractapi_ip_client.php';
 require_once __DIR__ . '/includes/abstractapi_phone_client.php';
 
+// Rate-limit settings. Window is in seconds (600 = 10 minutes).
+const BLOOM_ORDER_LIMIT_WINDOW_SECONDS = 600;
+const BLOOM_ORDER_LIMIT_PER_IP = 30;   // shared carrier IPs → keep generous
+const BLOOM_ORDER_LIMIT_PER_USER = 5;  // one real customer rarely needs more
+
+// Delivery fee sanity range, in pesos. The fee is ₱1 per road km, so
+// ₱2,000 already covers any delivery a branch could realistically make.
+// (A full server-side fee calculation is a planned follow-up.)
+const BLOOM_ORDER_MAX_SHIPPING_FEE = 2000;
+
+// Risk levels that make an admin notification "high priority".
+const BLOOM_PRIORITY_RISK_LEVELS = ['high', 'critical'];
+
 // Safety net: any uncaught error (Firestore/network hiccup) still answers
-// with JSON, so checkout.php shows a clear message instead of a blank
+// with JSON, so checkout shows a clear message instead of a blank
 // 500 page or "Failed to fetch".
 set_exception_handler(function (\Throwable $e) {
     error_log('submit_order.php failed: ' . $e->getMessage());
     bloom_json_response(['success' => false, 'message' => 'We could not place your order right now. Please try again.'], 500);
 });
 
+/**
+ * Wraps the shared rate limiter. bloom_check_and_record_attempt() already
+ * fails open on its own; this is a second safety net in case that helper
+ * ever changes to throw instead.
+ */
+function bloom_order_rate_limit_allows(string $action, string $key, int $maxAttempts, int $windowSeconds): bool
+{
+    try {
+        return bloom_check_and_record_attempt($action, $key, $maxAttempts, $windowSeconds);
+    } catch (\Throwable $e) {
+        error_log("submit_order.php: rate limiter failed for {$action}, failing open: " . $e->getMessage());
+        return true;
+    }
+}
+
+function bloom_order_rate_limited_response(): void
+{
+    bloom_json_response([
+        'success' => false,
+        'code' => 'RATE_LIMITED',
+        'message' => 'Too many order attempts. Please wait a few minutes and try again. If you already placed an order, check My Orders first.',
+    ], 429);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     bloom_json_response(['success' => false, 'message' => 'Method not allowed'], 405);
+}
+
+// --- 0. Per-IP rate limit — runs FIRST, before even verifying the token,
+// so a flood of requests is turned away as cheaply as possible.
+$clientIpForLimit = bloom_get_client_ip();
+if (!bloom_order_rate_limit_allows('submit_order_ip', $clientIpForLimit, BLOOM_ORDER_LIMIT_PER_IP, BLOOM_ORDER_LIMIT_WINDOW_SECONDS)) {
+    bloom_order_rate_limited_response();
 }
 
 // --- 1. Authenticate: the ID token is the only trustworthy identity here ---
@@ -68,6 +144,12 @@ try {
     $uid = bloom_verify_id_token($idToken);
 } catch (\Throwable $e) {
     bloom_json_response(['success' => false, 'message' => 'Invalid or expired session. Please sign in again.'], 401);
+}
+
+// --- 1b. Per-account rate limit — the uid comes from a signed token, so
+// switching networks, VPNs, or fake headers can't get around this one.
+if (!bloom_order_rate_limit_allows('submit_order_uid', $uid, BLOOM_ORDER_LIMIT_PER_USER, BLOOM_ORDER_LIMIT_WINDOW_SECONDS)) {
+    bloom_order_rate_limited_response();
 }
 
 $body = bloom_json_input();
@@ -85,11 +167,15 @@ if ($customer === null) {
 }
 
 if (($customer['status'] ?? null) === 'blocked') {
-    bloom_json_response(['success' => false, 'message' => 'This account has been blocked.'], 403);
+    bloom_json_response(['success' => false, 'code' => 'BLOCKED', 'message' => 'This account has been blocked.'], 403);
 }
 
-// --- 2. Restriction gate: mirrors the old client check, but server-trusted ---
-$isRestricted = ($customer['isRestricted'] ?? false) === true;
+// --- 2. Restriction gate: server-trusted, at most 30 days ---
+// active  = restricted and the 30 days are not over -> OTP required
+// expired = restricted but the 30 days are over     -> lifted in section 6
+$restriction = bloom_restriction_state($customer);
+$isRestricted = $restriction['active'];
+$restrictionExpired = $restriction['expired'];
 $otpVerified = ($body['otpVerified'] ?? false) === true;
 
 if ($isRestricted && !$otpVerified) {
@@ -101,8 +187,7 @@ if ($isRestricted && !$otpVerified) {
 }
 
 // If the client claims OTP verification, confirm it against Auth itself —
-// don't just take the flag's word for it. The phone must actually be linked
-// to this account (see the linkWithPhoneNumber change in checkout.php).
+// don't just take the flag's word for it.
 if ($isRestricted && $otpVerified) {
     try {
         $userRecord = bloom_auth()->getUser($uid);
@@ -116,29 +201,16 @@ if ($isRestricted && $otpVerified) {
 }
 
 // --- 2b. Email mail-server existence check — free (plain DNS, no API
-// quota), gated to accounts that already carry some fraud score so it
-// never adds latency to an ordinary customer's checkout. Blocks THIS
-// order only, never the account — a temporary DNS/mail-server outage on
-// a real domain is possible and shouldn't cost someone their account,
-// just this one attempt (they can simply retry).
-//
-// Uses the same canary pattern as email_domain_policy.php: confirm OUR
-// OWN DNS resolution is even working (via gmail.com) before trusting a
-// failure result for the customer's domain — otherwise a local DNS
-// hiccup on our end would incorrectly block every checkout at once,
-// not just the ones that deserve it.
+// quota). Only runs for accounts that are already flagged. Blocks THIS
+// order only, never the account.
 require_once __DIR__ . '/includes/email_domain_policy.php';
 
-$customerBaseScore = (int) ($customer['fraudScore'] ?? 0);
-if ($customerBaseScore > 0) {
+if (bloom_customer_is_fraud_flagged($customer)) {
     $customerEmail = $customer['email'] ?? null;
     if ($customerEmail) {
         $atPos = strrpos($customerEmail, '@');
         $emailDomain = $atPos !== false ? substr($customerEmail, $atPos + 1) : null;
 
-        // bloom_domain_has_mail_server() already runs its own gmail.com
-        // canary check internally and fails open (returns true) if OUR
-        // OWN DNS looks broken — no need to duplicate that check here.
         if ($emailDomain && !bloom_domain_has_mail_server($emailDomain)) {
             bloom_json_response([
                 'success' => false,
@@ -150,25 +222,30 @@ if ($customerBaseScore > 0) {
 }
 
 // --- 3. Validate the minimum shape of the order payload ---
-$required = ['name', 'phone', 'address', 'items', 'subtotal', 'shippingFee', 'paymentMethod', 'branchId'];
+// 'subtotal' is no longer required: the server computes it (section 3b).
+$required = ['name', 'phone', 'address', 'items', 'shippingFee', 'paymentMethod', 'branchId'];
 foreach ($required as $field) {
     if (!isset($body[$field]) || $body[$field] === '') {
         bloom_json_response(['success' => false, 'message' => "Missing field: $field"], 400);
     }
 }
 
-$items = $body['items'];
-if (!is_array($items) || count($items) === 0) {
-    bloom_json_response(['success' => false, 'message' => 'Cart is empty'], 400);
-}
-
-$subtotal = (float) $body['subtotal'];
-$shippingFee = (float) $body['shippingFee'];
 $isGift = ($body['isGift'] ?? false) === true;
 $branchId = (string) $body['branchId'];
 $customerLat = isset($body['customerLat']) && $body['customerLat'] !== '' ? (float) $body['customerLat'] : null;
 $customerLng = isset($body['customerLng']) && $body['customerLng'] !== '' ? (float) $body['customerLng'] : null;
 $normalizedPhone = preg_replace('/[^0-9+]/', '', $body['phone']);
+
+if (!bloom_is_valid_doc_id($branchId)) {
+    bloom_json_response(['success' => false, 'message' => 'Invalid branch. Please recalculate your delivery location.'], 400);
+}
+
+// Delivery fee: still computed by the client for now, but it must be a
+// real number inside a sane range.
+$shippingFee = is_numeric($body['shippingFee']) ? round((float) $body['shippingFee'], 2) : -1.0;
+if ($shippingFee < 0 || $shippingFee > BLOOM_ORDER_MAX_SHIPPING_FEE) {
+    bloom_json_response(['success' => false, 'code' => 'INVALID_FEE', 'message' => 'The delivery fee looks wrong. Please recalculate your delivery location and try again.'], 400);
+}
 
 // --- 3a. Shared web + app contract ---
 // One payment-method vocabulary for both platforms. Older spellings are
@@ -197,90 +274,80 @@ if ($isGift && $paymentMethod === 'cod') {
 $notes = trim(strip_tags((string) ($body['notes'] ?? '')));
 $notes = function_exists('mb_substr') ? mb_substr($notes, 0, 500) : substr($notes, 0, 500);
 
+// Every fraud activity this order triggers is collected here. Each entry is
+// { category, code, reason } built by bloom_fraud_activity().
+$fraudActivities = [];
+$hasHardEvidence = false; // true only for PROOF (banned device), never for a suspicious pattern
+
+// --- 3b. Server-side pricing (Payment Fraud prevention) ---
+// Runs BEFORE the paid fraud lookups below, so an out-of-stock or invalid
+// cart is refused without spending AbstractAPI quota.
+try {
+    $pricing = bloom_price_order_items($body['items'], $branchId);
+} catch (BloomOrderPricingException $e) {
+    bloom_json_response([
+        'success' => false,
+        'code' => $e->errorCode,
+        'message' => $e->getMessage(),
+    ], $e->httpStatus);
+}
+
+$items = $pricing['items'];
+$subtotal = $pricing['subtotal'];
+
+// The client's own subtotal is kept ONLY to compare. If it claimed LESS
+// than the real price, record it (Payment Fraud). Not blocked: the order is
+// charged the correct amount anyway, and an honest customer can hold an
+// outdated price if an admin changed it while the item sat in their cart.
+$clientSubtotal = isset($body['subtotal']) && is_numeric($body['subtotal']) ? round((float) $body['subtotal'], 2) : null;
+if ($clientSubtotal !== null && $clientSubtotal + 0.009 < $subtotal) {
+    $fraudActivities[] = bloom_fraud_activity('payment_fraud', 'price_mismatch', 'Payment amount mismatch: cart prices sent were lower than current product prices');
+}
+
 // Server-captured only — never trust an IP the client claims in the body.
 // X-Forwarded-For may hold a chain (client, proxy1, proxy2...); the first
-// entry is the original client IF your reverse proxy is trusted/configured
-// to set it correctly. Treat this as a fraud SIGNAL, not a hard identity.
+// entry is the original client IF the reverse proxy is trusted to set it.
+// Treat this as a fraud SIGNAL, not a hard identity.
 $forwardedFor = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? null;
 $requestIp = $forwardedFor ? trim(explode(',', $forwardedFor)[0]) : ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
 $deviceHash = isset($body['deviceHash']) && preg_match('/^[a-f0-9]{64}$/', $body['deviceHash']) ? $body['deviceHash'] : null;
 
-// --- 3b. Banned device gate: a device tied to a prior auto-ban is HARD
-// EVIDENCE, not a behavioral guess — this exact browser/device already
-// caused a confirmed fraud lockout once before. That's the one signal in
-// this whole file allowed to restrict an account on its own; everything
-// else below only adds to the score (see section 6 for why that matters).
-$orderRiskScore = 10; // this order's OWN stored rating — always starts at 10
-$customerScoreBump = 0; // what ADDS to the customer's cumulative score — starts at 0, only rises when something is actually found
-$localFraudFlags = [];
-$hasHardEvidence = false; // true only for PROOF (banned device), never for a suspicious pattern
-$triggerAutoRestriction = false;
-
+// --- 3c. Banned device (Fake Transaction, HARD EVIDENCE) ---
 if ($deviceHash !== null) {
     $bannedDevice = bloom_firestore_get_document_rest('banned_devices', $deviceHash);
-    if ($bannedDevice !== null) {
-        $orderRiskScore += 90;
-        $customerScoreBump += 90;
-        $localFraudFlags[] = 'Order placed from a previously banned device';
+    // An admin may have reviewed THIS customer and marked the match a false
+    // alarm (fraud_review.php adds them to allowedUids). The device stays
+    // banned for everyone else.
+    $allowedUids = is_array($bannedDevice['allowedUids'] ?? null) ? $bannedDevice['allowedUids'] : [];
+    if ($bannedDevice !== null && !in_array($uid, $allowedUids, true)) {        $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'banned_device', 'Order placed from a previously banned device');
         $hasHardEvidence = true;
     }
 }
 
-// --- 3c. AbstractAPI IP Intelligence: a signal, not a hard block.
-// VPN/proxy usage alone is common and legitimate (weighted lightly);
-// Tor or a flagged-abuse IP is weighted much higher, but — like every
-// other soft signal in this file — it only feeds the cumulative score.
-// It can no longer restrict an account on its own; it takes real
-// convergence with something else to reach the Critical tier now.
-// Relay/mobile are deliberately NOT penalized - relay covers privacy
-// features like Apple's iCloud Private Relay used by many ordinary
-// iPhone customers, and mobile is just "this is a phone carrier
-// connection," both completely normal for real customers.
-// Fails open (skips scoring) if unreachable/unconfigured — never block
-// a checkout over a third-party vendor outage.
+// --- 3d. IP reputation (Account Theft) ---
+// Recorded only — VPNs are also used by ordinary privacy-minded customers.
+// Relay/mobile are deliberately NOT recorded. Fails open if the vendor is
+// unreachable.
 if ($requestIp !== 'unknown') {
     try {
         $ipResult = bloom_abstractapi_check_ip($requestIp);
 
         if ($ipResult['tor'] || $ipResult['abuse']) {
-            $orderRiskScore += 40;
-            $customerScoreBump += 40;
-            $localFraudFlags[] = 'High-risk IP reputation (Tor/abuse flagged)';
+            $fraudActivities[] = bloom_fraud_activity('account_takeover', 'ip_tor_abuse', 'High-risk IP reputation (Tor/abuse flagged)');
         } elseif ($ipResult['vpn'] || $ipResult['proxy']) {
-            $orderRiskScore += 15;
-            $customerScoreBump += 15;
-            $localFraudFlags[] = 'VPN/Proxy detected';
+            $fraudActivities[] = bloom_fraud_activity('account_takeover', 'ip_vpn_proxy', 'VPN/Proxy detected');
         }
     } catch (\Throwable $e) {
         error_log('bloom_abstractapi_check_ip failed, failing open: ' . $e->getMessage());
     }
 }
 
-// --- 3d. AbstractAPI Phone Validation + cross-account reuse — the REAL
-// enforcement. check_phone_risk.php (called from checkout.php before SMS
-// verification) is only a UX convenience; a scripted request could skip
-// it entirely, so this section is what actually can't be bypassed —
-// every order passes through here regardless of what the client did.
-//
-// Score-based only, same as every other soft signal here: a disposable/
-// VOIP number is genuinely unusual for a flower delivery (someone has to
-// be reachable to receive it), so it carries real weight — but weight
-// alone, never an automatic restriction. It takes convergence with
-// something else to actually lock the account.
-//
-// Cross-account reuse (same phone tied to a DIFFERENT uid already) is a
-// meaningfully stronger signal than IP/device sharing, since phone
-// numbers aren't naturally shared across strangers the way IPs are — but
-// still not proof on its own (a family could legitimately share one
-// phone across two accounts), so it adds real weight without an
-// automatic restriction.
+// --- 3e. Phone checks (Fake Transaction) ---
 try {
     $phoneResult = bloom_abstractapi_check_phone($normalizedPhone);
 
     if ($phoneResult['disposable'] || $phoneResult['voip']) {
-        $orderRiskScore += 35;
-        $customerScoreBump += 35;
-        $localFraudFlags[] = 'Disposable/VOIP phone number used at checkout';
+        $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'phone_disposable_voip', 'Disposable/VOIP phone number used at checkout');
     }
 } catch (\Throwable $e) {
     error_log('bloom_abstractapi_check_phone failed, failing open: ' . $e->getMessage());
@@ -291,9 +358,7 @@ try {
     foreach ($phoneReuseRows as $reuseRow) {
         $reuseData = $reuseRow['data'];
         if (($reuseData['user_id'] ?? null) !== $uid) {
-            $orderRiskScore += 25;
-            $customerScoreBump += 25;
-            $localFraudFlags[] = 'Phone number already associated with a different account';
+            $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'phone_reuse', 'Phone number already associated with a different account');
             break;
         }
     }
@@ -301,19 +366,7 @@ try {
     error_log('Phone reuse check failed, failing open: ' . $e->getMessage());
 }
 
-// --- 3e. Delivery address reuse — same identity-reuse pattern as phone,
-// but targeting something a scammer with a genuinely fresh email, device,
-// and SIM STILL can't easily rotate: where the flowers actually need to
-// be delivered. A brand-new "clean" account is far less clean if it's
-// shipping to an address that's already tied to a different, previously
-// flagged customer.
-//
-// Lightly normalized (lowercase, trimmed, collapsed whitespace) so
-// trivial formatting differences (extra spaces) don't cause a false
-// "different address" miss — not a full address-parsing solution, just
-// enough to catch the common case of someone reusing the literal same
-// text across accounts. Web and app now build the address string in the
-// SAME format, so this check also matches across the two platforms.
+// --- 3f. Delivery address reuse (Fake Transaction) ---
 $normalizedAddress = strtolower(trim(preg_replace('/\s+/', ' ', (string) $body['address'])));
 
 try {
@@ -321,9 +374,7 @@ try {
     foreach ($addressReuseRows as $reuseRow) {
         $reuseData = $reuseRow['data'];
         if (($reuseData['user_id'] ?? null) !== $uid) {
-            $orderRiskScore += 20;
-            $customerScoreBump += 20;
-            $localFraudFlags[] = 'Delivery address already associated with a different account';
+            $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'address_reuse', 'Delivery address already associated with a different account');
             break;
         }
     }
@@ -331,25 +382,17 @@ try {
     error_log('Address reuse check failed, failing open: ' . $e->getMessage());
 }
 
-// --- 4. Velocity check: how many of this uid's past orders fall inside
-// the last 5 minutes? This USED TO hard-restrict on any single repeat —
-// that was the actual bug (see the "why this syntax" notes below). A real
-// customer legitimately checks out twice in 5 minutes all the time:
-// ordering for two different recipients, retrying after a declined
-// payment, fixing a typo by just re-ordering. So velocity now behaves
-// like every other signal in this file: it adds to the score, and gets
-// louder the more it repeats, but it can no longer restrict anyone by
-// itself — see section 6.
+// --- 4. Velocity (Fake Transaction) ---
+// Records repeat/rapid orders that stay UNDER the rate limit, so the admin
+// can see how they were bunched together.
 $fiveMinAgo = new DateTimeImmutable('-5 minutes');
 $pastOrderRows = bloom_firestore_query_rest('orders', 'user_id', $uid);
 
-$recentOrderCount = 0; // how many PAST orders fall inside the 5-minute window
-$orderCount = 0;       // total past orders (any time) — used for isFirstOrder below
+$recentOrderCount = 0;
+$orderCount = 0;
 foreach ($pastOrderRows as $orderRow) {
     $orderCount++;
     $oData = $orderRow['data'];
-    // REST decodes Firestore timestamps into DateTimeImmutable objects,
-    // which can be compared directly with >=.
     $ts = $oData['createdAt'] ?? $oData['timestamp'] ?? null;
     if ($ts instanceof \DateTimeInterface && $ts >= $fiveMinAgo) {
         $recentOrderCount++;
@@ -358,21 +401,12 @@ foreach ($pastOrderRows as $orderRow) {
 $isFirstOrder = ($orderCount === 0);
 
 if ($recentOrderCount === 1) {
-    // This is the customer's 2nd order inside 5 minutes. Common, often
-    // innocent — scored, not punished.
-    $orderRiskScore += 25;
-    $customerScoreBump += 25;
-    $localFraudFlags[] = 'Repeat checkout within a 5-minute window';
+    $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'velocity_repeat', 'Repeat checkout within a 5-minute window');
 } elseif ($recentOrderCount >= 2) {
-    // 3rd+ order in the same short window starts to look automated rather
-    // than accidental — scored higher, but STILL only feeds the
-    // cumulative total in section 6, never restricts by itself here.
-    $orderRiskScore += 40;
-    $customerScoreBump += 40;
-    $localFraudFlags[] = "Multiple rapid checkouts flagged ({$recentOrderCount} prior orders in under 5 minutes)";
+    $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'velocity_rapid', "Multiple rapid checkouts flagged ({$recentOrderCount} prior orders in under 5 minutes)");
 }
 
-// --- 5. Geo mismatch check: device location vs assigned branch ---
+// --- 5. Geo mismatch (Account Theft) ---
 function bloom_haversine_km(float $lat1, float $lon1, float $lat2, float $lon2): float
 {
     $earthRadiusKm = 6371;
@@ -391,164 +425,74 @@ if (!$isGift && $customerLat !== null && $customerLng !== null) {
         if (is_numeric($branchLat) && is_numeric($branchLng)) {
             $distance = bloom_haversine_km((float) $branchLat, (float) $branchLng, $customerLat, $customerLng);
             if ($distance > 50) {
-                $orderRiskScore += 45;
-                $customerScoreBump += 45;
-                $localFraudFlags[] = 'Severe Device-to-Destination Mismatch';
+                $fraudActivities[] = bloom_fraud_activity('account_takeover', 'geo_mismatch', 'Severe Device-to-Destination Mismatch');
             }
         }
     }
 }
 
-// --- 5b. Graduated trust: amplify (never originate) risk on a genuinely
-// first-ever order. This targets the hardest case in fraud prevention —
-// someone with a brand-new email, device, AND SIM, none of which have
-// any history anywhere yet, so no reputation-based check above can catch
-// them alone. Rather than inventing a new signal from nothing (which
-// would risk punishing completely innocent new customers), this only
-// AMPLIFIES risk that's already been found by another layer above —
-// "first order" + "already flagged for something else" is meaningfully
-// more suspicious than either fact alone, so it adds real extra weight,
-// but a clean first order with zero other flags is untouched.
-if ($isFirstOrder && $customerScoreBump > 0) {
-    $orderRiskScore += 20;
-    $customerScoreBump += 20;
-    $localFraudFlags[] = 'First order combined with pre-existing risk signal(s)';
-}
+// --- 5b. Triage for THIS order only ---
+// fraudCodes / riskScore / riskLevel from this order's own activities.
+// (The customer's account-wide values are built in section 6.)
+$orderRisk = bloom_build_fraud_order_fields($fraudActivities);
 
-// --- 6. Apply the score to the customer profile, then classify the
-// CUMULATIVE total into a risk tier. This single block is what actually
-// decides whether anyone gets restricted — nothing above this point is
-// allowed to make that call on its own anymore (except the hard-evidence
-// banned-device match, which is proof rather than a guess).
-//
-// Tiers mirror the same Low/Medium/High/Critical vocabulary as the Sales
-// Anomalies dashboard, so admins only ever learn one severity scale:
-//   Low (0-30)      -> silent log, nothing else happens.
-//   Medium (31-60)  -> still just logged, visible on the fraud dashboard.
-//   High (61-89)    -> logged + watchlisted (riskTier stored), but the
-//                      order still completes with no extra friction.
-//   Critical (90+)  -> restricted for 30 days, phone OTP required to lift.
-$checkAutoBan = false;
-$baseScore = (int) ($customer['fraudScore'] ?? 0);
-$ultimateScore = min(100, $baseScore + $customerScoreBump);
+// --- 6. Save activities on the customer, then apply the only automatic
+// actions that remain:
+//   (a) banned-device match  -> restrict for 30 days (hard evidence)
+//   (b) restricted customer who just passed phone OTP -> lift restriction
+//   (c) restriction older than 30 days               -> lift (expired)
+// bloom_build_fraud_customer_update() also writes the account-wide
+// fraudCodes / riskScore / riskLevel (whole history, merged).
+$now = bloom_rest_now();
+$customerUpdate = bloom_build_fraud_customer_update($customer, $fraudActivities, $now);
 
-$tierLowMax = 30;
-$tierMediumMax = 60;
-$tierHighMax = 89;
-
-$classifyTier = function (int $score) use ($tierLowMax, $tierMediumMax, $tierHighMax): string {
-    if ($score <= $tierLowMax) return 'low';
-    if ($score <= $tierMediumMax) return 'medium';
-    if ($score <= $tierHighMax) return 'high';
-    return 'critical';
-};
-
-$riskTier = $classifyTier($ultimateScore);
-
-// Critical is reached one of two ways: hard evidence (the banned-device
-// match above) or the cumulative score itself crossing the threshold
-// because several independent soft signals genuinely converged. Either
-// way, once we're here, restrict.
-$triggerAutoRestriction = $hasHardEvidence || $riskTier === 'critical';
-
-$customerUpdate = ['fraudScore' => $ultimateScore, 'riskTier' => $riskTier];
-
-if ($triggerAutoRestriction) {
-    $expiry = new DateTimeImmutable('+30 days');
+if ($hasHardEvidence) {
     $customerUpdate['isRestricted'] = true;
-    $customerUpdate['restrictedUntil'] = $expiry;
-    $localFraudFlags[] = $hasHardEvidence
-        ? 'Automated 30-Day Restriction: confirmed hard-evidence match (previously banned device).'
-        : 'Automated 30-Day Restriction: multiple risk signals converged to a Critical score.';
-} elseif ($otpVerified) {
-    // Trust restored via verified phone — mirrors the old client-side reset,
-    // now actually persisted since the server is allowed to write it.
+    $customerUpdate['restrictedUntil'] = new DateTimeImmutable('+' . BLOOM_RESTRICTION_MAX_DAYS . ' days');
+    $customerUpdate['fraudFlags'] = bloom_merge_unique(
+        $customerUpdate['fraudFlags'] ?? [],
+        ['Automated 30-Day Restriction: confirmed hard-evidence match (previously banned device).']
+    );
+} elseif ($isRestricted && $otpVerified) {
+    $existingFlags = $customerUpdate['fraudFlags'] ?? ($customer['fraudFlags'] ?? []);
     $customerUpdate['isRestricted'] = false;
-    $customerUpdate['fraudScore'] = min($ultimateScore, 10);
-    $ultimateScore = $customerUpdate['fraudScore'];
-    $riskTier = $classifyTier($ultimateScore);
-    $customerUpdate['riskTier'] = $riskTier;
-} elseif ($customerScoreBump === 0 && $baseScore > 10) {
-    // Reward good behavior: a checkout that raised zero new flags at all
-    // (nothing from device/IP/phone/address/velocity/geo) is treated as
-    // evidence the account isn't currently doing anything wrong — even
-    // if it's still carrying an elevated score from something earlier.
-    // Applies regardless of payment method, including COD.
-    //
-    // Floored at 10, NOT 0 — this matches the OTP-recovery reset above
-    // (min($ultimateScore, 10)), which is this app's actual established
-    // "clean baseline," not zero. Once an account works its way back
-    // down to 10 through clean orders, it freezes there: the condition
-    // ($baseScore > 10) stops applying entirely once the score reaches
-    // that floor, so it never decays further and never dips below it.
-    $decayedScore = max(10, $baseScore - 5);
-    $customerUpdate['fraudScore'] = $decayedScore;
-    $ultimateScore = $decayedScore;
-    $riskTier = $classifyTier($ultimateScore);
-    $customerUpdate['riskTier'] = $riskTier;
+    $customerUpdate['fraudFlags'] = bloom_merge_unique(
+        is_array($existingFlags) ? $existingFlags : [],
+        ['Identity verified via SMS - Trust Restored']
+    );
+} elseif ($restrictionExpired) {
+    $existingFlags = $customerUpdate['fraudFlags'] ?? ($customer['fraudFlags'] ?? []);
+    $customerUpdate['isRestricted'] = false;
+    $customerUpdate['fraudFlags'] = bloom_merge_unique(
+        is_array($existingFlags) ? $existingFlags : [],
+        ['Restriction expired after ' . BLOOM_RESTRICTION_MAX_DAYS . ' days - lifted automatically']
+    );
 }
 
-if ($ultimateScore >= 100) {
-    $checkAutoBan = true;
+if (!empty($customerUpdate)) {
+    bloom_firestore_update_fields_rest('customers', $uid, $customerUpdate);
 }
 
-if (!empty($localFraudFlags)) {
-    // REST has no arrayUnion(), so we do the same thing by hand: existing
-    // flags + new flags, duplicates removed, re-indexed as a clean list.
-    $existingFlags = is_array($customer['fraudFlags'] ?? null) ? array_values($customer['fraudFlags']) : [];
-    $customerUpdate['fraudFlags'] = array_values(array_unique(array_merge($existingFlags, $localFraudFlags)));
-}
-
-bloom_firestore_update_fields_rest('customers', $uid, $customerUpdate);
-
-if ($triggerAutoRestriction) {
+if ($hasHardEvidence) {
     bloom_firestore_add_document_rest('notifications', [
         'title' => 'Fraud Alert - Account Restricted',
-        'message' => $hasHardEvidence
-            ? "Account [$uid] was restricted: order placed from a previously banned device."
-            : "Account [$uid] was restricted: multiple risk signals converged to a Critical score.",
+        'message' => "Account [$uid] was restricted: order placed from a previously banned device.",
         'type' => 'fraud',
+        'priority' => 'high',
+        'riskLevel' => 'critical',
         'branchId' => $branchId,
-        'created_at' => bloom_rest_now(),
+        'created_at' => $now,
         'read' => false,
     ]);
 
     bloom_json_response([
         'success' => false,
         'code' => 'RESTRICTED',
-        'message' => 'This order could not be completed. This account has been automatically restricted for 30 days. Verify your phone number to continue.',
+        'message' => 'This order could not be completed. This account has been restricted for 30 days. Verify your phone number to continue.',
     ], 403);
 }
 
-if ($checkAutoBan) {
-    bloom_firestore_update_fields_rest('customers', $uid, ['status' => 'blocked']);
-    $email = $body['email'] ?? null;
-    if ($email) {
-        bloom_firestore_set_document_rest('blocked_emails', strtolower($email), [
-            'blockedUid' => $uid,
-            'reason' => 'Automated mitigation framework lockout: Terminal limit reached.',
-            'blockedAt' => bloom_rest_now(),
-        ]);
-    }
-    if ($deviceHash !== null) {
-        bloom_firestore_set_document_rest('banned_devices', $deviceHash, [
-            'bannedUid' => $uid,
-            'reason' => 'Automated mitigation framework lockout: Terminal limit reached.',
-            'bannedAt' => bloom_rest_now(),
-        ]);
-    }
-    bloom_firestore_add_document_rest('notifications', [
-        'title' => 'Security Alert - Account Blocked',
-        'message' => "Account associated with {$body['name']} reached peak fraud limits and has been blacklisted.",
-        'type' => 'warning',
-        'branchId' => $branchId,
-        'created_at' => bloom_rest_now(),
-        'read' => false,
-    ]);
-    bloom_json_response(['success' => false, 'code' => 'BLOCKED', 'message' => 'This account has been blocked.'], 403);
-}
-
-// --- 7. Sequential invoice number, transaction-safe (ports header.php's JS logic) ---
+// --- 7. Sequential invoice number, transaction-safe ---
 $invoiceId = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) {
     $year = (int) date('Y');
     $data = $tx->get('counters', 'invoices') ?? [];
@@ -558,10 +502,9 @@ $invoiceId = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx
     return $id;
 });
 
-// --- 8. Create the order (server-computed fraud fields only) ---
-$finalTotal = $subtotal + $shippingFee;
-
-$now = bloom_rest_now();
+// --- 8. Create the order (server-computed prices and fraud fields only) ---
+$finalTotal = round($subtotal + $shippingFee, 2);
+$orderCategories = array_values(array_unique(array_column($fraudActivities, 'category')));
 
 $orderId = bloom_firestore_add_document_rest('orders', [
     'user_id' => $uid,
@@ -576,25 +519,31 @@ $orderId = bloom_firestore_add_document_rest('orders', [
     'phone' => $normalizedPhone,
     'payment_method' => $paymentMethod,
     'notes' => $notes,
-    'items' => $items,
-    'subtotal' => $subtotal,
+    'items' => $items,                     // server-priced lines (real name/price)
+    'subtotal' => $subtotal,               // server-computed
+    'clientSubtotal' => $clientSubtotal,   // what the client claimed, for admin review
     'shipping_fee' => $shippingFee,
-    'total_price' => $finalTotal,
+    'total_price' => $finalTotal,          // what PayMongo / the rider will collect
     'branchId' => $branchId,
     'status' => 'pending',
     'paymentStatus' => 'Pending',
     'locked' => false,
     'type' => 'WEB',
     'isGift' => $isGift,
-    'fraudScore' => $orderRiskScore,
-    'fraudFlags' => $localFraudFlags,
-    'riskTier' => $riskTier, // the account's tier immediately after this order — powers the Fraud Analytics click-through history
+    'isFirstOrder' => $isFirstOrder,
+    'fraudActivities' => $fraudActivities,
+    'fraudFlags' => array_column($fraudActivities, 'reason'),
+    'fraudCategories' => $orderCategories,
+    'fraudCodes' => $orderRisk['fraudCodes'],   // triage: this order only
+    'riskScore' => $orderRisk['riskScore'],
+    'riskLevel' => $orderRisk['riskLevel'],
     'requestIp' => $requestIp,
     'deviceHash' => $deviceHash,
     'timestamp' => $now,
     'createdAt' => $now,
 ]);
 
+// --- 9. Notifications ---
 bloom_firestore_add_document_rest('notifications', [
     'title' => 'New Web Order Placed',
     'message' => "Order {$invoiceId} valued at P" . number_format($finalTotal, 2) . " received from {$body['name']}.",
@@ -604,8 +553,42 @@ bloom_firestore_add_document_rest('notifications', [
     'read' => false,
 ]);
 
+if (!empty($fraudActivities)) {
+    $categoryLabels = array_map(fn($key) => BLOOM_FRAUD_CATEGORIES[$key], $orderCategories);
+
+    // Account-wide level after this order (falls back to what was stored
+    // before, then to this order's level).
+    $accountRiskLevel = $customerUpdate['riskLevel'] ?? ($customer['riskLevel'] ?? $orderRisk['riskLevel']);
+
+    // Escalate if EITHER this order or the whole account is high/critical.
+    $isPriority = in_array($orderRisk['riskLevel'], BLOOM_PRIORITY_RISK_LEVELS, true)
+        || in_array($accountRiskLevel, BLOOM_PRIORITY_RISK_LEVELS, true);
+
+    bloom_firestore_add_document_rest('notifications', [
+        'title' => $isPriority ? 'High-Priority Fraud Activity' : 'Fraud Activity Recorded',
+        'message' => "Order {$invoiceId} from account [$uid] recorded: " . implode(', ', $categoryLabels)
+            . '. Order risk: ' . ucfirst($orderRisk['riskLevel']) . " ({$orderRisk['riskScore']} pts)"
+            . '; account risk: ' . ucfirst((string) $accountRiskLevel)
+            . '. Review it in the Fraud Activity Log.',
+        'type' => 'fraud',
+        'priority' => $isPriority ? 'high' : 'normal',
+        'riskLevel' => $orderRisk['riskLevel'],
+        'riskScore' => $orderRisk['riskScore'],
+        'accountRiskLevel' => $accountRiskLevel,
+        'branchId' => $branchId,
+        'created_at' => $now,
+        'read' => false,
+    ]);
+}
+
+// The server's own totals are returned too, so clients can show the
+// customer exactly what was charged. Risk values are deliberately NOT
+// returned: telling a fraudster how they were scored helps them adapt.
 bloom_json_response([
     'success' => true,
     'orderId' => $orderId,
     'invoiceId' => $invoiceId,
+    'subtotal' => $subtotal,
+    'shippingFee' => $shippingFee,
+    'total' => $finalTotal,
 ]);
