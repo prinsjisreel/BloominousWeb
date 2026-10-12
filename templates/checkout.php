@@ -445,6 +445,15 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                         <span id="onlinePaymentHintWallet" class="font-black text-[#363949]">GCash</span> app. No screenshots needed — we confirm your payment automatically.
                     </p>
                 </div>
+                <div id="codRestrictedNotice" class="hidden -mt-3 p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                    <i class="fa-solid fa-shield-cat text-amber-600 mt-0.5 text-base flex-shrink-0"></i>
+                    <div>
+                        <p class="text-xs font-black text-amber-900 m-0">Dynamic COD Gating Active (Restricted Tier: 50-86% Risk)</p>
+                        <p class="text-[11px] text-amber-800 font-semibold leading-relaxed m-0 mt-1">
+                            Cash-on-Delivery is unavailable for this account to protect fresh perishable bouquet inventory. Please pay online via <strong>GCash</strong> or <strong>Maya</strong> so our florists can safely begin handcrafting your floral arrangement.
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -663,6 +672,7 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         const notesInput = document.getElementById('orderNotes');
         const paymentDropdown = document.getElementById('paymentMethod');
         const codOption = document.getElementById('codOption');
+        const codRestrictedNotice = document.getElementById('codRestrictedNotice');
         const placeOrderBtn = document.getElementById('placeOrderBtn');
 
         // =====================================================================
@@ -670,10 +680,31 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         // =====================================================================
         let assignedBranchId = localStorage.getItem('bloom_branch_id') || 'main_branch';
 
-        // Restriction / OTP
+        // Restriction / OTP / Dynamic COD Gating
         let accountIsRestrictedCurrently = false;
+        let isCodRestricted = false;
+        let codRestrictionReason = '';
         let restrictedUntilText = 'for 30 days';
         let otpVerifiedThisSession = false;
+
+        function updatePaymentAvailability() {
+            if (sendAsGift) {
+                codOption.disabled = true;
+                codOption.text = 'Cash on Delivery (unavailable for gifts)';
+                if (codRestrictedNotice) codRestrictedNotice.classList.add('hidden');
+                if (paymentDropdown.value === 'cod') paymentDropdown.value = 'gcash';
+            } else if (isCodRestricted) {
+                codOption.disabled = true;
+                codOption.text = 'Cash on Delivery (Restricted: 50-86% Risk)';
+                if (codRestrictedNotice) codRestrictedNotice.classList.remove('hidden');
+                if (paymentDropdown.value === 'cod') paymentDropdown.value = 'gcash';
+            } else {
+                codOption.disabled = false;
+                codOption.text = 'Cash on Delivery';
+                if (codRestrictedNotice) codRestrictedNotice.classList.add('hidden');
+            }
+            updatePaymentHint();
+        }
 
         // Location selection — the popup AND "Get Current Location" both write here
         let selectedRegion = null;        // { code, name }
@@ -813,6 +844,21 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 if (!doc.exists) return;
                 const c = doc.data();
                 accountIsRestrictedCurrently = (c.isRestricted === true);
+                const score = parseInt(c.riskScore ?? c.fraudScore ?? 0, 10);
+                const isBanned = (c.isBanned === true) || (c.status === 'blocked');
+
+                if (isBanned || score >= 87) {
+                    isCodRestricted = true;
+                    codRestrictionReason = "Account flagged for severe fraud risk. Cash on Delivery is disabled.";
+                } else if (accountIsRestrictedCurrently || (score >= 50 && score <= 86)) {
+                    isCodRestricted = true;
+                    codRestrictionReason = "Cash-on-Delivery (COD) disabled due to account restriction (50-86% risk rating). Please use online payment.";
+                } else {
+                    isCodRestricted = false;
+                    codRestrictionReason = "";
+                }
+                updatePaymentAvailability();
+
                 restrictedUntilText = 'for 30 days';
                 if (accountIsRestrictedCurrently && c.restrictedUntil) {
                     const dynamicDays = Math.ceil((c.restrictedUntil.toDate() - new Date()) / (1000 * 60 * 60 * 24));
@@ -1759,10 +1805,7 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         giftCheckbox.addEventListener('change', () => {
             sendAsGift = giftCheckbox.checked;
             clearDeliveryEstimate();
-
-            codOption.disabled = sendAsGift;
-            codOption.text = sendAsGift ? 'Cash on Delivery (unavailable for gifts)' : 'Cash on Delivery';
-            if (sendAsGift && paymentDropdown.value === 'cod') paymentDropdown.value = 'gcash';
+            updatePaymentAvailability();
 
             giftSubtitle.innerText = sendAsGift
                 ? "You'll need to search and confirm the recipient's exact address below. Cash on Delivery is unavailable for gifts."
@@ -1983,6 +2026,15 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
             const shippingFee = deliveryFee;
             const finalTotal = subtotal + shippingFee;
 
+            if (paymentMethod === 'cod') {
+                if (sendAsGift) {
+                    return showToast("Cash on Delivery is unavailable for gift orders. Please select GCash or Maya.", 'error');
+                }
+                if (isCodRestricted) {
+                    return showToast(codRestrictionReason || "Cash-on-Delivery is disabled for this account (50-86% risk rating). Please choose GCash or Maya.", 'error');
+                }
+            }
+
             setButtonBusy('Analyzing Security Protocols...');
 
             try {
@@ -2022,6 +2074,13 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 try { result = await response.json(); } catch (_) { result = {}; }
 
                 if (!result.success) {
+                    if (result.code === 'COD_RESTRICTED') {
+                        isCodRestricted = true;
+                        updatePaymentAvailability();
+                        showToast(result.message, 'error');
+                        setButtonReady();
+                        return;
+                    }
                     if (result.code === 'RESTRICTED' || result.code === 'BLOCKED') {
                         sessionStorage.setItem('bloom_shop_error', result.message);
                         window.location.href = 'shop.php';

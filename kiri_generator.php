@@ -284,4 +284,4 @@ include 'templates/header.php';
     window.__previewFromHistory = (url) => { if (url) showPreview(url); };
 </script>
 
-<?php include 'templates/footer.php'; ?>
+<?php include 'templates/footer.php'; ?>    

@@ -58,6 +58,28 @@ include 'templates/header.php';
     .pod-cancel { background: #f5f5f5; color: var(--text-light); }
     .pod-confirm { background: var(--primary); color: #fff; }
 
+    /* Proof of Order viewer (walk-in orders, super-admin only).
+       The photo itself is taken in BloominousApp's camera-only POS screen,
+       with the date/time already burned into the pixels. This page only reads it. */
+    .proof-btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 12px; border: 1px solid rgba(233,30,99,0.25); background: rgba(233,30,99,0.06); color: var(--primary); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
+    .proof-btn:hover { background: var(--primary); color: #fff; }
+    .proof-none { font-size: 0.7rem; font-weight: 700; color: var(--text-light); font-style: italic; white-space: nowrap; }
+    #proofViewerOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.7); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
+    #proofViewerOverlay.open { display: flex; }
+    #proofViewerModal { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2rem; max-width: 640px; width: 100%; max-height: 92vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.25); }
+    #proofViewerModal h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0; color: var(--text-main); }
+    .proof-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; gap: 12px; }
+    .proof-close { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-light); cursor: pointer; flex-shrink: 0; }
+    .proof-img-wrap { background: #111; border-radius: 18px; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 220px; }
+    #proofViewerImg { max-width: 100%; max-height: 60vh; display: block; }
+    #proofViewerImgError { display: none; color: #ccc; font-size: 0.8rem; font-weight: 700; padding: 2rem; text-align: center; }
+    .proof-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 1.2rem; }
+    .proof-meta div { background: var(--surface-alt); border-radius: 14px; padding: 12px 14px; }
+    .proof-meta label { display: block; font-size: 0.6rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+    .proof-meta span { font-size: 0.82rem; font-weight: 700; word-break: break-all; }
+    #proofClockWarning { display: none; margin-top: 1rem; padding: 12px 14px; border-radius: 14px; background: rgba(245,158,11,0.12); color: #b45309; font-size: 0.78rem; font-weight: 700; }
+    .proof-open-link { display: inline-block; margin-top: 1rem; font-size: 0.75rem; font-weight: 800; color: var(--primary); text-decoration: none; }
+
     /* ============ DARK MODE ============
        Only active when header.php has set data-theme="dark" on <html>.
        1) Colors that have no matching theme variable get a dark value.
@@ -74,6 +96,8 @@ include 'templates/header.php';
     html[data-theme="dark"] .stat-card,
     html[data-theme="dark"] .list-card { box-shadow: none; }
     html[data-theme="dark"] .status-select { color-scheme: dark; }
+    html[data-theme="dark"] #proofViewerModal { box-shadow: none; border: 1px solid var(--border-color); }
+    html[data-theme="dark"] #proofClockWarning { color: #fbbf24; }
 
     html[data-theme="dark"] .order-content .text-gray-800 { color: var(--text-main); }
     html[data-theme="dark"] .order-content .text-gray-400,
@@ -144,6 +168,8 @@ include 'templates/header.php';
                         <th>Valuation</th>
                         <th>Timeline</th>
                         <th>Status Selection</th>
+                        <!-- Hidden unless: Walk-in tab is active AND viewer is super-admin -->
+                        <th id="proofHeader" style="display:none;">Proof of Order</th>
                     </tr>
                 </thead>
                 <tbody id="orderData">
@@ -188,11 +214,55 @@ include 'templates/header.php';
     </div>
 </div>
 
+<!-- Proof of Order viewer: read-only, walk-in orders, super-admin only -->
+<div id="proofViewerOverlay" onclick="if (event.target === this) closeProofViewer()">
+    <div id="proofViewerModal">
+        <div class="proof-head">
+            <div>
+                <h3>Proof of Order</h3>
+                <p class="text-gray-400 text-xs font-bold mt-1" id="proofViewerOrderId"></p>
+            </div>
+            <button type="button" class="proof-close" onclick="closeProofViewer()" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <div class="proof-img-wrap">
+            <img id="proofViewerImg" src="" alt="Proof of order photo">
+            <div id="proofViewerImgError">The photo could not be loaded. It may have been removed, or the link has expired.</div>
+        </div>
+
+        <div class="proof-meta">
+            <div><label>Taken (device clock)</label><span id="proofCapturedAt">—</span></div>
+            <div><label>Uploaded (server clock)</label><span id="proofUploadedAt">—</span></div>
+            <div><label>Taken By</label><span id="proofCapturedBy">—</span></div>
+            <div><label>Order Total</label><span id="proofTotal">—</span></div>
+        </div>
+
+        <div id="proofClockWarning"></div>
+
+        <a id="proofOpenLink" class="proof-open-link" href="#" target="_blank" rel="noopener noreferrer">
+            <i class="fa-solid fa-up-right-from-square"></i> Open full-size in new tab
+        </a>
+    </div>
+</div>
+
 <script>
     // Online (type 'WEB', or missing type — legacy web orders) vs Walk-in (type 'POS').
     // This single flag decides which status options a row gets and which stat card
     // numbers get computed, so it is checked in exactly one place.
-    function isOnlineOrder(o) { return (o.type || 'WEB') !== 'POS'; }
+    // Compared in UPPERCASE because the two platforms spell it differently:
+    // the web POS terminal writes 'POS', BloominousApp's POS scanner writes 'pos'.
+    // Without toUpperCase(), every app walk-in sale (the ones that carry a
+    // proof photo) would wrongly land in the Online tab.
+    function isOnlineOrder(o) { return String(o.type || 'WEB').toUpperCase() !== 'POS'; }
+
+    // Who may see walk-in proof photos. Add 'admin' here to widen access.
+    const PROOF_VIEWER_ROLES = ['super-admin'];
+    const canViewProof = PROOF_VIEWER_ROLES.includes(window.currentUserRole);
+
+    // Filled on every render: order id -> its proof fields. The button only
+    // carries the order id; the photo URL is looked up here instead of being
+    // pasted into the HTML, so odd characters in a URL can never break the page.
+    const proofByOrderId = {};
 
     const ORDER_STATUS_OPTIONS = {
         online: ['pending', 'processing', 'in transit'],
@@ -244,8 +314,14 @@ include 'templates/header.php';
 
         const docs = activeChannel === 'online' ? onlineOrders : walkinOrders;
 
+        // The Proof column exists only on the Walk-in tab, and only for super-admins.
+        const showProof = canViewProof && activeChannel === 'walkin';
+        document.getElementById('proofHeader').style.display = showProof ? '' : 'none';
+        const colCount = showProof ? 6 : 5;
+        for (const key in proofByOrderId) delete proofByOrderId[key];
+
         if (docs.length === 0) {
-            orderData.innerHTML = "<tr><td colspan='5' class='text-center p-10 text-gray-400'>No " + (activeChannel === 'online' ? 'online' : 'walk-in') + " orders found for this branch.</td></tr>";
+            orderData.innerHTML = "<tr><td colspan='" + colCount + "' class='text-center p-10 text-gray-400'>No " + (activeChannel === 'online' ? 'online' : 'walk-in') + " orders found for this branch.</td></tr>";
             document.getElementById('totalOrders').innerText = 0;
             document.getElementById('pendingOrders').innerText = 0;
             document.getElementById('totalSales').innerText = '₱0.00';
@@ -265,13 +341,15 @@ include 'templates/header.php';
                 : (rawStatus === 'delivered' || rawStatus === 'completed') ? 'confirmed'
                 : 'pending';
 
-            const amount = parseFloat(data.total_price || data.total_amount || 0);
+            // totalAmount = BloominousApp's field name; the other two are the web's.
+            const amount = parseFloat(data.total_price || data.total_amount || data.totalAmount || 0);
             if (status === 'pending') pendingCount++;
             if (status === 'confirmed') salesTotal += amount;
 
             const dateObj = data.createdAt || data.timestamp;
             const date = dateObj ? dateObj.toDate().toLocaleDateString() : 'N/A';
-            const itemsSummary = (data.items || []).map(i => `${i.name} (${i.qty})`).join(', ');
+            // The web saves item counts as 'qty', the app as 'quantity'.
+            const itemsSummary = (data.items || []).map(i => `${i.name} (${i.qty ?? i.quantity ?? 1})`).join(', ');
             const uid = data.user_id || '';
             const customerName = data.customer_name || userMap[uid] || 'Walk-in Customer';
             const avatarInitial = customerName.charAt(0).toUpperCase();
@@ -279,6 +357,24 @@ include 'templates/header.php';
             const optionsHtml = allowedOptions.map(opt =>
                 `<option value="${opt}" ${status === opt ? 'selected' : ''}>${STATUS_LABELS[opt]}</option>`
             ).join('');
+
+            // Proof cell: a button if the order has a usable photo, otherwise a note.
+            let proofCell = '';
+            if (showProof) {
+                if (isSafeProofUrl(data.proofPhotoUrl)) {
+                    proofByOrderId[data.id] = {
+                        url: data.proofPhotoUrl,
+                        capturedAt: data.proofCapturedAt,
+                        uploadedAt: data.proofUploadedAt,
+                        capturedBy: data.proofCapturedBy || data.processedBy || data.cashierEmail || 'Unknown',
+                        amount: amount,
+                        label: data.orderId || data.order_id || data.id
+                    };
+                    proofCell = `<td><button type="button" class="proof-btn" onclick="openProofViewer('${data.id}')"><i class="fa-solid fa-camera"></i> View Photo</button></td>`;
+                } else {
+                    proofCell = `<td><span class="proof-none">No photo</span></td>`;
+                }
+            }
 
             html += `
             <tr>
@@ -296,6 +392,7 @@ include 'templates/header.php';
                         ${optionsHtml}
                     </select>
                 </td>
+                ${proofCell}
             </tr>`;
         });
 
@@ -304,6 +401,84 @@ include 'templates/header.php';
         document.getElementById('pendingOrders').innerText = pendingCount;
         document.getElementById('totalSales').innerText = '₱' + salesTotal.toLocaleString(undefined, {minimumFractionDigits: 2});
     }
+
+    // --- Proof of Order viewer (walk-in orders, super-admin only) ---
+
+    // Only accept HTTPS links that point at Firebase Storage. Anything else
+    // (empty, typo'd, or a hostile value) is treated as "No photo".
+    function isSafeProofUrl(url) {
+        if (typeof url !== 'string' || url === '') return false;
+        try {
+            const u = new URL(url);
+            return u.protocol === 'https:' &&
+                (u.hostname === 'firebasestorage.googleapis.com' || u.hostname.endsWith('.firebasestorage.app'));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Firestore Timestamp -> JS Date. Returns null while a server timestamp
+    // is still pending (it arrives a moment later in the next snapshot).
+    function toDateOrNull(ts) {
+        return (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
+    }
+
+    function formatProofDate(d) {
+        return d ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }) : '—';
+    }
+
+    function openProofViewer(orderId) {
+        if (!canViewProof) return; // second lock, in case the button is ever rendered by mistake
+        const proof = proofByOrderId[orderId];
+        if (!proof) return;
+
+        const img = document.getElementById('proofViewerImg');
+        const imgError = document.getElementById('proofViewerImgError');
+        img.style.display = 'block';
+        imgError.style.display = 'none';
+        img.onerror = () => { img.style.display = 'none'; imgError.style.display = 'block'; };
+        img.src = proof.url; // set as a property, never through innerHTML
+
+        const captured = toDateOrNull(proof.capturedAt);
+        const uploaded = toDateOrNull(proof.uploadedAt);
+
+        document.getElementById('proofViewerOrderId').innerText = 'Order ' + proof.label;
+        document.getElementById('proofCapturedAt').innerText = formatProofDate(captured);
+        document.getElementById('proofUploadedAt').innerText = uploaded ? formatProofDate(uploaded) : 'Pending...';
+        document.getElementById('proofCapturedBy').innerText = proof.capturedBy;
+        document.getElementById('proofTotal').innerText = '₱' + proof.amount.toLocaleString(undefined, { minimumFractionDigits: 2 });
+        document.getElementById('proofOpenLink').href = proof.url;
+
+        // The stamp on the photo comes from the phone's clock, which a cashier
+        // could change. The server clock can't be changed, so a big gap between
+        // the two is worth a second look.
+        const warning = document.getElementById('proofClockWarning');
+        const CLOCK_GAP_LIMIT_MIN = 10;
+        if (captured && uploaded) {
+            const gapMin = Math.abs(uploaded - captured) / 60000;
+            if (gapMin > CLOCK_GAP_LIMIT_MIN) {
+                warning.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ';
+                warning.append(`The device time and server time differ by ${Math.round(gapMin)} minutes. The phone's clock may have been changed, or the upload was delayed.`);
+                warning.style.display = 'block';
+            } else {
+                warning.style.display = 'none';
+            }
+        } else {
+            warning.style.display = 'none';
+        }
+
+        document.getElementById('proofViewerOverlay').classList.add('open');
+    }
+
+    function closeProofViewer() {
+        document.getElementById('proofViewerOverlay').classList.remove('open');
+        document.getElementById('proofViewerImg').src = '';
+    }
+
+    // Esc closes the viewer, like most photo lightboxes.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeProofViewer();
+    });
 
     // Routes a dropdown change to the right handler for the row's channel.
     async function handleStatusChange(orderId, onlineStr, newStatus, selectEl) {

@@ -15,16 +15,38 @@
  *   riskScore  (0-100 points)
  *       Each activity code is placed in an evidence tier; each tier has a
  *       fixed number of points. The tier placement is argued from the
- *       research basis; the point VALUES per tier are DESIGN PARAMETERS
- *       (initial, to be recalibrated once real outcomes exist).
+ *       research basis and checked against two public (synthetic) datasets
+ *       where a matching column existed; the point VALUES per tier are
+ *       DESIGN PARAMETERS, to be recalibrated once BLOOM has its own
+ *       reviewed cases.
  *
- * IMPORTANT: neither value restricts anyone. They only decide the ORDER
- * in which admins review accounts and how loud the alert is.
+ *       Sensitivity analysis (bloom_sensitivity.py) on the Sparkov dataset
+ *       (1.85M card transactions) and the Kaggle e-commerce dataset (1.5M):
+ *         - customer history: rule 13 follows Chen et al. (2024) exactly
+ *           (average + 2 standard deviations, last 2 months)
+ *         - amount line: top 5% gave the best balance in both datasets
+ *         - velocity: 1 repeat in 5 min lift 3.95; 2+ repeats lift 13.45
+ *         - distance: not testable (Sparkov does not model it)
  *
- * This file also holds two pure helpers (no database calls):
- *   - bloom_restriction_state():     restrictions last at most 30 days
- *   - bloom_build_account_history(): the customer's transaction history,
- *                                    shown to admins BEFORE any decision
+ * WHAT THE VALUES DO:
+ *   - They decide the ORDER in which admins review accounts and how loud
+ *     the alert is.
+ *   - ONE customer-facing effect: an account score of
+ *     BLOOM_COD_BLOCK_SCORE or more removes Cash on Delivery at checkout
+ *     (online payment still works). See bloom_customer_cod_blocked().
+ *   - They never block an order and never ban anyone by themselves.
+ *
+ * Pure helpers in this file (no database calls):
+ *   - bloom_restriction_state():          restrictions last at most 30 days
+ *   - bloom_build_account_history():      the customer's transaction history,
+ *                                         shown to admins BEFORE any decision
+ *   - bloom_build_history_baseline():     the customer's own usual spending
+ *                                         (last 60 days)            - rule 13
+ *   - bloom_history_amount_deviates():    above their own usual range?
+ *   - bloom_build_shop_amount_baseline(): the SHOP's usual order sizes
+ *                                         (recent orders, top 5%)   - rule 10
+ *   - bloom_new_account_high_value():     new account + unusually large order?
+ *   - bloom_customer_cod_blocked():       should COD be hidden for this account?
  *
  * Used by:
  *   - submit_order.php         (records activities at checkout)
@@ -36,6 +58,7 @@
  *   - category keys in BLOOM_FRAUD_CATEGORIES
  *   - risk level keys: critical, high, medium, low
  *   - customer/order fields: fraudCodes, riskScore, riskLevel, fraudReview
+ *   - BLOOM_COD_BLOCK_SCORE is mirrored as COD_BLOCK_SCORE in the dashboards
  * Never rename a key; only labels may change.
  */
 
@@ -78,13 +101,30 @@ const BLOOM_FRAUD_CODE_RULES = [
     'price_mismatch'        => ['tier' => 'very_strong',     'group' => 'price'],
     // Strong
     'phone_disposable_voip' => ['tier' => 'strong',          'group' => 'phone_quality'],
-    'velocity_repeat'       => ['tier' => 'strong',          'group' => 'velocity'],
+    // velocity_rapid (2+ earlier orders within 5 min): Sparkov lift 13.45.
     'velocity_rapid'        => ['tier' => 'strong',          'group' => 'velocity'],
+    // Strong (spending behavior). Both share the "spending" group: rule 13
+    // needs history and rule 10 needs NO history, so one order can only
+    // ever trigger one of them anyway; the group makes that explicit.
+    //   history_amount_deviation - Chen et al. (2024), features A6 and
+    //       A15/A16: an amount outside the customer's usual range
+    //       (2 standard deviations) "represents abnormal customer behavior".
+    //   new_account_high_value   - PayMongo "outlier amounts"; Kaggle
+    //       e-commerce dataset lift 12.71 (account <=30 days + top-5% amount).
+    // Kept at "strong", not "very_strong": a large order can be an honest
+    // special occasion, so it is a red flag for review, not proof.
+    'history_amount_deviation' => ['tier' => 'strong',       'group' => 'spending'],
+    'new_account_high_value'   => ['tier' => 'strong',       'group' => 'spending'],
     // Moderate-strong
     'ip_tor_abuse'          => ['tier' => 'moderate_strong', 'group' => 'network'],
     'ip_vpn_proxy'          => ['tier' => 'moderate_strong', 'group' => 'network'],
     'geo_mismatch'          => ['tier' => 'moderate_strong', 'group' => 'location'],
     // Supporting (relationship / context signals with common legit causes)
+    // velocity_repeat (exactly 1 earlier order within 5 min): Sparkov lift
+    // 3.95, a real but moderate signal; honest customers sometimes reorder
+    // a forgotten item. Shares the "velocity" group with velocity_rapid,
+    // so an account still gets velocity points only once (the higher one).
+    'velocity_repeat'       => ['tier' => 'supporting',      'group' => 'velocity'],
     'phone_reuse'           => ['tier' => 'supporting',      'group' => 'phone_link'],
     'address_reuse'         => ['tier' => 'supporting',      'group' => 'address_link'],
     'email_risk_signup'     => ['tier' => 'supporting',      'group' => 'email'],
@@ -93,7 +133,7 @@ const BLOOM_FRAUD_CODE_RULES = [
 // Codes that count as hard evidence -> risk level "critical".
 const BLOOM_HARD_EVIDENCE_CODES = ['banned_device'];
 
-// Upper bound for the score (current codes can reach at most 84).
+// Upper bound for the score (current codes can reach at most 94).
 const BLOOM_RISK_SCORE_CAP = 100;
 
 // Valid risk levels, lowest to highest.
@@ -102,9 +142,78 @@ const BLOOM_RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 // A restriction never lasts longer than this (design parameter).
 const BLOOM_RESTRICTION_MAX_DAYS = 30;
 
-// Order statuses used by the account-history calculation.
+// Order statuses used by the history calculations.
 const BLOOM_COMPLETED_ORDER_STATUSES = ['delivered', 'completed'];
 const BLOOM_CANCELLED_ORDER_STATUSES = ['cancelled'];
+
+/*
+ * RULE 13 - CUSTOMER'S OWN HISTORY (returning customers).
+ * Source: Chen, Lee, Huang & Peng (2024), "Credit Card Fraud Detection via
+ * Intelligent Sampling and Self-supervised Learning", ACM TIST 15(2), Art. 35.
+ *
+ *   BLOOM_HISTORY_WINDOW_DAYS     = 60  SOURCED (p. 35:8): features use "the
+ *                                       user's past transactions within two
+ *                                       months".
+ *   BLOOM_HISTORY_STD_DEVIATIONS  = 2   SOURCED (p. 35:10, A15/A16): checks
+ *                                       "whether the current transaction
+ *                                       amount ... is within 2 standard
+ *                                       deviation of the amount spent"; if
+ *                                       not, it "represents abnormal customer
+ *                                       behavior". BLOOM is a single merchant,
+ *                                       so "spent for the merchant" = the
+ *                                       customer's previous BLOOM orders.
+ *   BLOOM_HISTORY_MIN_ORDERS      = 3   DESIGN PARAMETER: a standard
+ *                                       deviation from only 1-2 orders is too
+ *                                       unstable to call anything "unusual".
+ *                                       Customers with fewer orders fall to
+ *                                       rule 10 instead.
+ *
+ * BLOOM adaptations (state these in the paper):
+ *   - Chen et al. use this as a feature inside a machine-learning model;
+ *     BLOOM uses it as a stand-alone yes/no rule.
+ *   - Only the UPPER side is checked (unusually small orders cost a single
+ *     flower shop nothing).
+ *   - "Standard deviation" is the sample standard deviation (n - 1), the
+ *     usual choice when estimating from a small set of orders.
+ */
+const BLOOM_HISTORY_WINDOW_DAYS = 60;
+const BLOOM_HISTORY_STD_DEVIATIONS = 2;
+const BLOOM_HISTORY_MIN_ORDERS = 3;
+
+/*
+ * RULE 10 - NEW ACCOUNT + UNUSUALLY LARGE ORDER (no history yet).
+ *   BLOOM_NEW_ACCOUNT_MAX_DAYS     = 30   DATA-INFORMED: in the Kaggle
+ *                                         e-commerce dataset, accounts up
+ *                                         to 30 days old had the same fraud
+ *                                         lift as accounts up to 7 days
+ *                                         (4.46 vs 4.44) while covering 4x
+ *                                         more fraud cases.
+ *   BLOOM_SHOP_AMOUNT_PERCENTILE   = 0.95 DATA-TESTED: "unusually large"
+ *                                         = above the shop's top 5% of
+ *                                         recent order totals. Compared with
+ *                                         top 10% and top 1%, top 5% gave the
+ *                                         best balance in both datasets
+ *                                         (Sparkov: 75.8% of fraud caught
+ *                                         while flagging 5% of purchases).
+ *   BLOOM_SHOP_BASELINE_ORDERS     = 200  DESIGN PARAMETER: how many recent
+ *                                         shop orders define "usual".
+ *   BLOOM_SHOP_BASELINE_MIN_ORDERS = 20   DESIGN PARAMETER: below this the
+ *                                         shop has too few orders for a
+ *                                         top-5% line to mean anything, so
+ *                                         the rule stays silent.
+ */
+const BLOOM_NEW_ACCOUNT_MAX_DAYS = 30;
+const BLOOM_SHOP_AMOUNT_PERCENTILE = 0.95;
+const BLOOM_SHOP_BASELINE_ORDERS = 200;
+const BLOOM_SHOP_BASELINE_MIN_ORDERS = 20;
+
+/*
+ * COD GATING - perishable-goods protection.
+ * A refused COD bouquet cannot be resold, so accounts at or above this
+ * account score must pay online (GCash/Maya). The order itself is never
+ * blocked. DESIGN PARAMETER; mirrored as COD_BLOCK_SCORE in the dashboards.
+ */
+const BLOOM_COD_BLOCK_SCORE = 50;
 
 /**
  * Builds one fraud activity record.
@@ -270,6 +379,60 @@ function bloom_customer_is_fraud_flagged(array $customer): bool
 }
 
 /**
+ * Has an admin cleared this account as a false alarm, with no NEW
+ * activity recorded since? Same rule as isDismissed() in
+ * fraud_analytics.php, so the dashboard and checkout always agree.
+ */
+function bloom_customer_cleared_by_review(array $customer): bool
+{
+    $review = $customer['fraudReview'] ?? null;
+    if (!is_array($review) || ($review['decision'] ?? null) !== 'false_alarm') {
+        return false;
+    }
+
+    $reviewedAt = $review['reviewedAt'] ?? null;
+    if (!($reviewedAt instanceof DateTimeInterface)) {
+        return false;
+    }
+
+    $lastActivity = $customer['lastFraudActivityAt'] ?? null;
+    if (!($lastActivity instanceof DateTimeInterface)) {
+        return true;
+    }
+
+    return $reviewedAt >= $lastActivity;
+}
+
+/**
+ * Should Cash on Delivery be hidden for this account?
+ *
+ * Yes when ANY of these is true:
+ *   - the account is banned (isBanned)
+ *   - a restriction is ACTIVE right now (expired ones don't count)
+ *   - the account score (or a legacy fraudScore) is BLOOM_COD_BLOCK_SCORE
+ *     or more, UNLESS an admin cleared it as a false alarm and nothing new
+ *     was recorded since
+ *
+ * Blacklisted (status 'blocked') accounts never reach this check:
+ * submit_order.php refuses them earlier.
+ */
+function bloom_customer_cod_blocked(array $customer, bool $restrictionActive): bool
+{
+    if (($customer['isBanned'] ?? false) === true || $restrictionActive) {
+        return true;
+    }
+
+    $score = $customer['riskScore'] ?? $customer['fraudScore'] ?? 0;
+    $score = is_numeric($score) ? (int) $score : 0;
+
+    if ($score < BLOOM_COD_BLOCK_SCORE) {
+        return false;
+    }
+
+    return !bloom_customer_cleared_by_review($customer);
+}
+
+/**
  * Fields to store on ONE ORDER document, describing only that order's
  * own activities.
  *
@@ -338,6 +501,21 @@ function bloom_order_is_flagged(array $order): bool
 }
 
 /**
+ * Whole days between account creation and now, or null if unknown.
+ * Shared by the admin history panel and rule 10, so both always show
+ * the same age for the same account.
+ */
+function bloom_account_age_days(?DateTimeInterface $accountCreatedAt, ?DateTimeInterface $now = null): ?int
+{
+    if ($accountCreatedAt === null) {
+        return null;
+    }
+    $now = $now ?? new DateTimeImmutable('now');
+    $seconds = $now->getTimestamp() - $accountCreatedAt->getTimestamp();
+    return max(0, (int) floor($seconds / 86400));
+}
+
+/**
  * The customer's transaction history, computed from their orders.
  * Shown to the admin BEFORE any manual decision, so a decision is never
  * made from one flagged order alone.
@@ -402,12 +580,6 @@ function bloom_build_account_history(array $orderRows, ?DateTimeInterface $accou
         }
     }
 
-    $accountAgeDays = null;
-    if ($accountCreatedAt !== null) {
-        $seconds = $now->getTimestamp() - $accountCreatedAt->getTimestamp();
-        $accountAgeDays = max(0, (int) floor($seconds / 86400));
-    }
-
     if ($total === 0) {
         $profile = 'no_orders';
     } elseif ($completed === 0) {
@@ -423,7 +595,7 @@ function bloom_build_account_history(array $orderRows, ?DateTimeInterface $accou
     return [
         'historyProfile' => $profile,
         'accountCreatedAt' => $toIso($accountCreatedAt),
-        'accountAgeDays' => $accountAgeDays,
+        'accountAgeDays' => bloom_account_age_days($accountCreatedAt, $now),
         'totalOrders' => $total,
         'completedOrders' => $completed,
         'cancelledOrders' => $cancelled,
@@ -436,4 +608,219 @@ function bloom_build_account_history(array $orderRows, ?DateTimeInterface $accou
         'averageCompletedOrder' => $completed > 0 ? round($completedSpend / $completed, 2) : null,
         'latestOrderTotal' => $latestOrderTotal,
     ];
+}
+
+/**
+ * Sample standard deviation (divides by n - 1). Returns null for fewer
+ * than 2 values, because "spread" needs at least two numbers.
+ */
+function bloom_sample_std_dev(array $values): ?float
+{
+    $count = count($values);
+    if ($count < 2) {
+        return null;
+    }
+    $mean = array_sum($values) / $count;
+    $squaredGaps = 0.0;
+    foreach ($values as $value) {
+        $squaredGaps += ((float) $value - $mean) ** 2;
+    }
+    return sqrt($squaredGaps / ($count - 1));
+}
+
+/**
+ * RULE 13: the customer's "normal" spending, from their own previous
+ * orders inside the last BLOOM_HISTORY_WINDOW_DAYS days.
+ *
+ * $orderRows  rows from bloom_firestore_query_rest('orders', 'user_id', $uid).
+ *             The order being placed right now is NOT in this list yet.
+ *
+ * Counted:  not cancelled, placed inside the window, positive total_price.
+ * Skipped:  cancelled orders, orders with no timestamp, zero/odd totals.
+ *
+ * Only DESCRIBES the history; bloom_history_amount_deviates() decides.
+ */
+function bloom_build_history_baseline(array $orderRows, ?DateTimeInterface $now = null): array
+{
+    $now = $now ?? new DateTimeImmutable('now');
+    $windowStart = (new DateTimeImmutable())
+        ->setTimestamp($now->getTimestamp())
+        ->modify('-' . BLOOM_HISTORY_WINDOW_DAYS . ' days');
+
+    $totals = [];
+    $lastOrderAt = null;
+    $lastTotal = null;
+
+    foreach ($orderRows as $row) {
+        $order = is_array($row['data'] ?? null) ? $row['data'] : [];
+
+        $status = strtolower(trim((string) ($order['status'] ?? '')));
+        if (in_array($status, BLOOM_CANCELLED_ORDER_STATUSES, true)) {
+            continue;
+        }
+
+        $placedAt = $order['createdAt'] ?? $order['timestamp'] ?? null;
+        if (!($placedAt instanceof DateTimeInterface) || $placedAt < $windowStart) {
+            continue;
+        }
+
+        $amount = $order['total_price'] ?? null;
+        if (!is_numeric($amount) || (float) $amount <= 0) {
+            continue;
+        }
+        $amount = round((float) $amount, 2);
+
+        $totals[] = $amount;
+
+        if ($lastOrderAt === null || $placedAt > $lastOrderAt) {
+            $lastOrderAt = $placedAt;
+            $lastTotal = $amount;
+        }
+    }
+
+    $count = count($totals);
+    $average = $count > 0 ? array_sum($totals) / $count : null;
+    $stdDev = bloom_sample_std_dev($totals);
+    $hasEnough = $count >= BLOOM_HISTORY_MIN_ORDERS;
+
+    // The "usual range" ceiling: average + 2 standard deviations.
+    $upperLimit = ($hasEnough && $average !== null && $stdDev !== null)
+        ? round($average + BLOOM_HISTORY_STD_DEVIATIONS * $stdDev, 2)
+        : null;
+
+    return [
+        'windowDays' => BLOOM_HISTORY_WINDOW_DAYS,
+        'orderCount' => $count,
+        'hasEnoughHistory' => $hasEnough,
+        'minTotal' => $count > 0 ? min($totals) : null,
+        'maxTotal' => $count > 0 ? max($totals) : null,
+        'averageTotal' => $average !== null ? round($average, 2) : null,
+        'stdDev' => $stdDev !== null ? round($stdDev, 2) : null,
+        'stdDeviations' => BLOOM_HISTORY_STD_DEVIATIONS,
+        'upperLimit' => $upperLimit,
+        'lastTotal' => $lastTotal,
+    ];
+}
+
+/**
+ * RULE 13 decision: is this order ABOVE the customer's own usual range?
+ *
+ *   - fewer than BLOOM_HISTORY_MIN_ORDERS orders in the window -> false
+ *     (no pattern to compare; rule 10 handles these customers)
+ *   - otherwise true only when the total is above
+ *     average + BLOOM_HISTORY_STD_DEVIATIONS x standard deviation
+ *     (Chen et al., 2024, features A15/A16)
+ *
+ * Only the upper side is checked: an unusually SMALL order carries no
+ * money risk for a single flower shop.
+ */
+function bloom_history_amount_deviates(array $baseline, float $currentTotal): bool
+{
+    if (($baseline['hasEnoughHistory'] ?? false) !== true) {
+        return false;
+    }
+
+    $upperLimit = $baseline['upperLimit'] ?? null;
+    if (!is_numeric($upperLimit) || (float) $upperLimit <= 0) {
+        return false;
+    }
+
+    return $currentTotal > (float) $upperLimit;
+}
+
+/**
+ * Percentile with linear interpolation (the same method pandas uses by
+ * default, so BLOOM's cut-off matches the dataset analysis).
+ * $p is 0..1. Returns null for an empty list.
+ */
+function bloom_percentile(array $values, float $p): ?float
+{
+    $values = array_values(array_filter($values, 'is_numeric'));
+    $count = count($values);
+    if ($count === 0) {
+        return null;
+    }
+
+    sort($values, SORT_NUMERIC);
+    $p = max(0.0, min(1.0, $p));
+    $position = ($count - 1) * $p;
+    $lower = (int) floor($position);
+    $upper = (int) ceil($position);
+    $fraction = $position - $lower;
+
+    return (float) $values[$lower] + ((float) $values[$upper] - (float) $values[$lower]) * $fraction;
+}
+
+/**
+ * RULE 10: the SHOP's usual order sizes, from recent order rows.
+ *
+ * $orderRows  rows with the order fields under 'data' (status, total_price),
+ *             newest first, from any customer.
+ *
+ * Cancelled and zero/odd totals are skipped. 'threshold' is the
+ * BLOOM_SHOP_AMOUNT_PERCENTILE line (top 5%), or null when the shop has
+ * fewer than BLOOM_SHOP_BASELINE_MIN_ORDERS usable orders.
+ */
+function bloom_build_shop_amount_baseline(array $orderRows): array
+{
+    $totals = [];
+
+    foreach ($orderRows as $row) {
+        $order = is_array($row['data'] ?? null) ? $row['data'] : [];
+
+        $status = strtolower(trim((string) ($order['status'] ?? '')));
+        if (in_array($status, BLOOM_CANCELLED_ORDER_STATUSES, true)) {
+            continue;
+        }
+
+        $amount = $order['total_price'] ?? null;
+        if (!is_numeric($amount) || (float) $amount <= 0) {
+            continue;
+        }
+        $totals[] = round((float) $amount, 2);
+    }
+
+    $count = count($totals);
+    $hasEnough = $count >= BLOOM_SHOP_BASELINE_MIN_ORDERS;
+    $threshold = $hasEnough ? bloom_percentile($totals, BLOOM_SHOP_AMOUNT_PERCENTILE) : null;
+
+    return [
+        'orderCount' => $count,
+        'percentile' => BLOOM_SHOP_AMOUNT_PERCENTILE,
+        'hasEnoughOrders' => $hasEnough,
+        'threshold' => $threshold !== null ? round($threshold, 2) : null,
+    ];
+}
+
+/**
+ * RULE 10 decision: a NEW account, with NO usable history of its own,
+ * placing an order above the shop's top-5% line?
+ *
+ * Every part must be true:
+ *   - account age is known and at most BLOOM_NEW_ACCOUNT_MAX_DAYS
+ *   - the customer does NOT have enough history for rule 13
+ *   - the shop has enough orders to draw a top-5% line
+ *   - this order's total is above that line
+ *
+ * A missing piece (unknown age, too few shop orders) means "no flag":
+ * the rule fails quiet instead of guessing.
+ */
+function bloom_new_account_high_value(?int $accountAgeDays, array $historyBaseline, array $shopBaseline, float $currentTotal): bool
+{
+    if ($accountAgeDays === null || $accountAgeDays > BLOOM_NEW_ACCOUNT_MAX_DAYS) {
+        return false;
+    }
+    if (($historyBaseline['hasEnoughHistory'] ?? false) === true) {
+        return false;
+    }
+    if (($shopBaseline['hasEnoughOrders'] ?? false) !== true) {
+        return false;
+    }
+
+    $threshold = $shopBaseline['threshold'] ?? null;
+    if (!is_numeric($threshold) || (float) $threshold <= 0) {
+        return false;
+    }
+
+    return $currentTotal > (float) $threshold;
 }

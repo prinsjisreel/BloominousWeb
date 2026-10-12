@@ -8,7 +8,14 @@
  * TRIAGE (written by includes/fraud_activity.php on the server):
  *   - Risk level (critical/high/medium/low): rule-based, from categories.
  *   - Triage score (0-100, shown as a bar): evidence-tiered points.
- * Both only decide REVIEW ORDER. Neither restricts anyone.
+ * Both decide REVIEW ORDER. The one customer-facing effect: an account
+ * score of COD_BLOCK_SCORE (50) or more turns Cash on Delivery off at
+ * checkout (same rule as bloom_customer_cod_blocked() in PHP). The page
+ * shows that state on each card so staff see what the customer sees.
+ *
+ * "How this works" guide: a plain-language explanation for staff and
+ * non-technical readers. Every number in it must match
+ * includes/fraud_activity.php; update both together.
  *
  * REVIEW + DECISION (inside each account's Fraud Activity Log):
  *   1. Transaction History, computed on the server (fraud_review.php):
@@ -39,6 +46,12 @@ if ($user_role !== 'admin' && $user_role !== 'super-admin') {
     header("Location: admin.php");
     exit();
 }
+
+// The "How the Fraud Activity Log Works" guide is written for the super
+// admin, who owns the fraud rules and answers for them (thesis panel,
+// owner, audits). Regular admins still use the page to review accounts,
+// but the guide banner and modal are not printed for them at all.
+$isSuperAdmin = ($user_role === 'super-admin');
 
 include 'templates/header.php';
 ?>
@@ -103,6 +116,39 @@ include 'templates/header.php';
     #fraudHistoryModal h3 { font-size: 1.3rem; font-weight: 900; margin: 0 0 0.25rem; }
     #fraudHistoryModal h4 { font-size: 0.7rem; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; color: #9ca3af; margin: 0; }
     #fraudHistoryModal .close-btn { float: right; background: none; border: none; font-size: 1.1rem; color: #999; cursor: pointer; }
+
+    /* "How this works" guide */
+    .guide-banner { width: 100%; text-align: left; cursor: pointer; font-family: inherit; background: var(--surface); border: 1px solid var(--border-color); border-radius: 24px; padding: 1rem 1.25rem; margin-bottom: 2rem; display: flex; align-items: center; justify-content: space-between; gap: 16px; transition: 0.15s; }
+    .guide-banner:hover { border-color: #f9a8d4; }
+    .guide-banner-title { font-size: 0.85rem; font-weight: 900; color: var(--text-main); margin: 0; }
+    .guide-banner-text { font-size: 0.75rem; color: #6b7280; margin: 2px 0 0; }
+    .guide-banner-link { font-size: 0.68rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; color: #ec4899; white-space: nowrap; }
+
+    #methodologyModalOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.6); z-index: 550; align-items: center; justify-content: center; padding: 20px; }
+    #methodologyModalOverlay.open { display: flex; }
+    #methodologyModal { background: var(--surface); color: var(--text-main); border-radius: 24px; padding: 2rem; max-width: 820px; width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
+    #methodologyModal .close-btn { float: right; background: none; border: none; font-size: 1.2rem; color: #999; cursor: pointer; }
+    .guide-intro { font-size: 0.82rem; color: #4b5563; line-height: 1.6; margin: 0.5rem 0 1.25rem; }
+    .guide-section { border-top: 1px solid var(--border-color); padding: 1.1rem 0; }
+    .guide-section h4 { font-size: 0.95rem; font-weight: 900; color: var(--text-main); margin: 0 0 0.5rem; }
+    .guide-section p, .guide-section li { font-size: 0.8rem; color: #4b5563; line-height: 1.65; }
+    .guide-section p { margin: 0 0 0.5rem; }
+    .guide-section ul { margin: 0.25rem 0 0.5rem; padding-left: 1.2rem; list-style: disc; }
+    .guide-section li { margin-bottom: 0.3rem; }
+    .guide-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 0.75rem; font-size: 0.78rem; }
+    .guide-table th { text-align: left; font-size: 0.62rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px; color: #9ca3af; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
+    .guide-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-color); color: #374151; vertical-align: top; line-height: 1.5; }
+    .guide-table td:first-child { font-weight: 800; white-space: nowrap; }
+    .guide-note { font-size: 0.75rem; color: #6b7280; background: #f9fafb; border-radius: 12px; padding: 10px 12px; line-height: 1.55; }
+
+    html[data-theme="dark"] :is(.guide-banner-text, .guide-intro, .guide-section p, .guide-section li, .guide-note) { color: var(--text-secondary); }
+    html[data-theme="dark"] .guide-table td { color: var(--text-main); }
+    html[data-theme="dark"] .guide-table th { color: var(--text-light); }
+    html[data-theme="dark"] .guide-note { background: var(--surface-alt); }
+
+    /* Cash on Delivery state on cards and in the log */
+    .cod-line { font-size: 0.7rem; font-weight: 700; color: #92400e; margin-top: 4px; }
+    html[data-theme="dark"] .cod-line { color: #fcd34d; }
     .fh-section { margin-bottom: 1.5rem; }
     .fh-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
     .fh-toolbar label { font-size: 0.72rem; font-weight: 700; color: #6b7280; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -197,13 +243,25 @@ include 'templates/header.php';
             <h1 class="brand-font text-5xl font-black text-gray-800">Fraud Activity Log</h1>
             <p class="text-gray-400 text-sm font-medium mt-1">Accounts are ordered by risk level and triage score so the riskiest are reviewed first. Decisions are made inside each account's log, after reviewing its history.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-4 w-full md:w-auto">
+        <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
+           
             <div class="relative flex-1 md:flex-none">
                 <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 text-xs"></i>
                 <input type="text" id="fraudAccountSearch" class="bg-white border border-gray-100 rounded-2xl px-12 py-3 text-sm outline-none focus:border-pink-300 transition-all w-full md:w-80 shadow-sm" placeholder="Search Account Name or UID...">
             </div>
         </div>
     </div>
+
+    <?php if ($isSuperAdmin): ?>
+    <!-- Opens the plain-language guide below. Super admin only. -->
+    <button type="button" class="guide-banner" onclick="openMethodologyModal()">
+        <div>
+            <p class="guide-banner-title">Super Admin Guide: How the Fraud Activity Log works</p>
+            <p class="guide-banner-text">What the system checks at checkout, how accounts are ranked, and what you and your admins decide.</p>
+        </div>
+        <span class="guide-banner-link">Read the guide &rarr;</span>
+    </button>
+    <?php endif; ?>
 
     <!-- Overview Counters -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -299,6 +357,100 @@ include 'templates/header.php';
     </div>
 </div>
 
+<?php if ($isSuperAdmin): ?>
+<!-- "How this works" guide, written for the super admin.
+     Every number here must match includes/fraud_activity.php. -->
+<div id="methodologyModalOverlay" onclick="if(event.target === this) closeMethodologyModal();">
+    <div id="methodologyModal" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+        <button class="close-btn" onclick="closeMethodologyModal()" title="Close"><i class="fa-solid fa-xmark"></i></button>
+        <p class="guide-note" style="margin:0 0 4px;">Super Admin Guide</p>
+        <h3 id="guideTitle" class="text-xl font-black m-0">How the Fraud Activity Log Works</h3>
+        <p class="guide-intro">
+            This guide is for you as super admin. It explains what the fraud rules do, so you can
+            answer for them and check that your admins use them correctly. Every online order is
+            checked for warning signs at the moment the customer places it. The system does not
+            decide who is a fraudster. It notes what it found, ranks the accounts so the most
+            worrying ones are reviewed first, and leaves the final decision to you or your admins.
+        </p>
+
+        <div class="guide-section">
+            <h4>1. What the system looks for</h4>
+            <p>Each warning sign belongs to one of four kinds of online-shop fraud described in e-commerce fraud studies:</p>
+            <ul>
+                <li><strong>Account Theft:</strong> someone may be using another person's account, for example ordering through a hidden network connection or from a location far from the delivery area.</li>
+                <li><strong>Payment Fraud:</strong> someone may be trying to pay less than the real price, or the amount is far outside what is normal.</li>
+                <li><strong>Fake Transaction:</strong> the order may not be genuine, for example a throwaway phone number, details already used by a different account, or many orders in a few minutes.</li>
+                <li><strong>Malicious Return:</strong> refused deliveries or false complaints after delivery.</li>
+            </ul>
+        </div>
+
+        <div class="guide-section">
+            <h4>2. How much each warning sign counts</h4>
+            <p>Signs backed by stronger evidence count for more. The same kind of sign is counted only once, so one problem cannot inflate the total.</p>
+            <table class="guide-table">
+                <thead><tr><th>Weight</th><th>Warning signs</th></tr></thead>
+                <tbody>
+                    <tr><td>15 points</td><td>Order placed from a device that was banned before. Prices sent from the customer's browser lower than the real prices.</td></tr>
+                    <tr><td>10 points</td><td>Throwaway or internet-only phone number. Two or more other orders by the same account within 5 minutes. A returning customer's order well above their usual spending range. A new account placing an unusually large order.</td></tr>
+                    <tr><td>8 points</td><td>Hidden or high-risk internet connection (VPN, proxy, Tor). Delivery point more than 50 km from the branch.</td></tr>
+                    <tr><td>6 points</td><td>One other order by the same account within 5 minutes (people sometimes reorder a forgotten item). Phone number or delivery address already used by a different account. Risky email address at sign-up.</td></tr>
+                </tbody>
+            </table>
+            <p class="guide-note">The point values are starting values chosen by the BLOOM team from the research. They will be adjusted once enough real cases have been reviewed by staff.</p>
+        </div>
+
+        <div class="guide-section">
+            <h4>3. Risk level and triage score</h4>
+            <ul>
+                <li><strong>Risk level</strong> depends on how many <em>kinds</em> of fraud were seen: <strong>Critical</strong> when a banned device was used, <strong>High</strong> for two or more kinds, <strong>Medium</strong> for one kind, <strong>Low</strong> for none.</li>
+                <li><strong>Triage score</strong> (0 to 100) adds up the points of the warning signs on the account.</li>
+            </ul>
+            <p>Accounts are listed by level first and score second, so the riskiest are reviewed first. The score is a ranking aid, not a percentage chance that someone is committing fraud.</p>
+        </div>
+
+        <div class="guide-section">
+            <h4>4. Comparing an order with what is usual</h4>
+            <ul>
+                <li><strong>Returning customers</strong> (3 or more orders in the last 60 days): the system works out their average order and how much their orders usually vary. An order is flagged when it goes well beyond that usual range: above the average plus two times the usual variation (two "standard deviations"). Example: a customer whose orders were P800, P1,000 and P1,200 averages P1,000 and usually varies by about P200, so an order above P1,400 is flagged. This is the same range used in a 2024 credit card fraud study.</li>
+                <li><strong>New accounts</strong> (30 days old or less, with no such history): an order is flagged when it is larger than 95 out of every 100 recent orders in the shop. The line is recalculated from the latest 200 orders, so it follows the season automatically.</li>
+            </ul>
+            <p>A first-time customer is never flagged just for being new. Large orders around Valentine's Day or Mother's Day are normal, which is why these are warning signs for review and not proof.</p>
+        </div>
+
+        <div class="guide-section">
+            <h4>5. What happens automatically, and what staff decide</h4>
+            <ul>
+                <li><strong>Banned device:</strong> the account is restricted for up to 30 days. The customer can lift it by verifying their phone number.</li>
+                <li><strong>Score of 50 or more:</strong> Cash on Delivery is turned off and the customer pays online with GCash or Maya. Fresh bouquets cannot be resold if a delivery is refused, so this protects the shop without stopping the order.</li>
+                <li><strong>Everything else:</strong> the order goes through normally and the warning signs wait for staff review.</li>
+            </ul>
+            <p>You or an admin open an account's log, read its transaction history and orders, and choose one of two decisions, each with a written reason. Every decision and its reason is saved in the admin audit log, so you can check later who decided what and why:</p>
+            <ul>
+                <li><strong>Confirm Fraud:</strong> the account is blacklisted and its devices are banned.</li>
+                <li><strong>Mark False Alarm:</strong> any restriction is lifted and Cash on Delivery comes back, until a new warning sign appears.</li>
+            </ul>
+        </div>
+
+        <div class="guide-section">
+            <h4>6. Where the rules come from</h4>
+            <p>Each warning sign is based on published sources: e-commerce fraud research (including eBay's work on linked accounts, devices and addresses, and a 2024 study on comparing orders with a customer's previous two months), OWASP security guidance, and PayMongo's fraud-prevention documentation.</p>
+            <p>The rules were also tested on two public datasets (about 1.5 million online-shop transactions and 1.85 million card transactions). Each limit was tried at several values to find the best balance between catching fraud and bothering honest customers:</p>
+            <ul>
+                <li>New accounts placing unusually large orders were about 12.7 times more likely to be fraud than average.</li>
+                <li>The "top 5%" line caught about three quarters of fraud while flagging only 5 out of 100 purchases, a better balance than 10% or 1%.</li>
+                <li>One repeat order within 5 minutes was a mild sign; two or more was a strong sign, so they carry different weights.</li>
+            </ul>
+            <p>Both datasets are computer-generated, so they were used to compare settings and confirm which signs matter most, not as proof about BLOOM's own customers.</p>
+            <p class="guide-note">The system does not use an artificial-intelligence model. Every flag comes from a specific, written rule, so staff can always see exactly why an order was flagged.</p>
+        </div>
+
+        <div class="mt-4 flex justify-end">
+            <button type="button" onclick="closeMethodologyModal()" class="filter-chip active">Close guide</button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <script>
     /* =====================================================================
      * 1. CATEGORY, LEVEL, SCORE AND FILTER DEFINITIONS
@@ -325,6 +477,9 @@ include 'templates/header.php';
     // Same as BLOOM_RISK_SCORE_CAP in includes/fraud_activity.php.
     const SCORE_MAX = 100;
 
+    // Same as BLOOM_COD_BLOCK_SCORE in includes/fraud_activity.php.
+    const COD_BLOCK_SCORE = 50;
+
     // Same as BLOOM_REVIEW_REASON_MIN_CHARS / MAX in fraud_review.php.
     const REASON_MIN_CHARS = 15;
     const REASON_MAX_CHARS = 500;
@@ -341,7 +496,7 @@ include 'templates/header.php';
     const CATEGORY_RULES = [
         { category: 'account_action',   keywords: ['restriction', 'restricted', 'trust restored', 'verified via', 'blacklisted', 'reviewed by admin'] },
         { category: 'malicious_return', keywords: ['refund', 'void', 'return', 'not delivered', 'wilted'] },
-        { category: 'payment_fraud',    keywords: ['payment', 'declined', 'dispute', 'chargeback'] },
+        { category: 'payment_fraud',    keywords: ['payment', 'declined', 'dispute', 'chargeback', 'usual spending', 'top 5%'] },
         { category: 'account_takeover', keywords: ['tor/abuse', 'vpn', 'proxy', 'device-to-destination', 'new device', 'unrecognized device'] },
         { category: 'fake_transaction', keywords: ['banned device', 'disposable', 'voip', 'phone number already', 'address already', 'repeat checkout', 'rapid checkouts', 'first order', 'email risk'] }
     ];
@@ -436,7 +591,9 @@ include 'templates/header.php';
 
     // A score is only trusted when the server actually wrote a number.
     function readScore(doc) {
-        return typeof doc.riskScore === 'number' && Number.isFinite(doc.riskScore) ? doc.riskScore : null;
+        if (typeof doc.riskScore === 'number' && Number.isFinite(doc.riskScore)) return doc.riskScore;
+        if (typeof doc.fraudScore === 'number' && Number.isFinite(doc.fraudScore)) return doc.fraudScore;
+        return null;
     }
 
     // Same 30-day rule as bloom_restriction_state() in PHP: a restriction
@@ -455,6 +612,19 @@ include 'templates/header.php';
         const last = doc.lastFraudActivityAt;
         if (!last || !last.toMillis) return true;
         return review.reviewedAt.toMillis() >= last.toMillis();
+    }
+
+    // Same rule as bloom_customer_cod_blocked() in PHP: banned, an active
+    // restriction, or a score at/above COD_BLOCK_SCORE that has not been
+    // cleared as a false alarm.
+    function isCodBlocked(doc, score, dismissed) {
+        if (doc.isBanned === true || isRestrictionActive(doc)) return true;
+        return score !== null && score >= COD_BLOCK_SCORE && !dismissed;
+    }
+
+    function buildCodLine(account) {
+        if (account.state === 'blocked' || !account.codBlocked) return '';
+        return '<p class="cod-line"><i class="fa-solid fa-money-bill-wave mr-1"></i>Cash on Delivery off: online payment only</p>';
     }
 
     function buildLevelBadge(level) {
@@ -502,7 +672,7 @@ include 'templates/header.php';
                      aria-valuemin="0" aria-valuemax="${SCORE_MAX}" aria-valuenow="${safeScore}">
                     <div class="score-fill ${meta.fill}" style="width:${percent}%"></div>
                 </div>
-                <p class="score-note">Sets review order only.</p>
+                <p class="score-note">Sets review order. At ${COD_BLOCK_SCORE} or more, Cash on Delivery is turned off.</p>
             </div>`;
     }
 
@@ -592,7 +762,8 @@ include 'templates/header.php';
             dismissed,
             review: doc.fraudReview || null,
             level: deriveRiskLevel(doc, activity),
-            score
+            score,
+            codBlocked: isCodBlocked(doc, score, dismissed)
         };
     }
 
@@ -670,6 +841,7 @@ include 'templates/header.php';
                     </div>
                     <p class="text-xs font-mono text-gray-400">UID: ${escapeHtml(a.id)}</p>
                     ${restrictedUntil}
+                    ${buildCodLine(a)}
                     ${buildReviewLine(a.review)}
                 </div>
                 <div class="flex-1" style="max-width: 420px; width: 100%;">
@@ -761,7 +933,8 @@ include 'templates/header.php';
         const el = document.getElementById('fhRiskSummary');
         el.innerHTML = `
             <div>${buildLevelBadge(account.level)} <span class="risk-badge ${STATE_META[account.state].badge}">${STATE_META[account.state].label}</span></div>
-            ${buildScoreBar(account.score, account.level)}`;
+            ${buildScoreBar(account.score, account.level)}
+            ${buildCodLine(account)}`;
     }
 
     function renderAccountActivity(account) {
@@ -984,7 +1157,7 @@ include 'templates/header.php';
         const summary = buildHistorySummaryText(history);
         const question = decision === 'confirmed_fraud'
             ? `Confirm fraud for this account?\n\nThis will BLACKLIST the account and BAN every device linked to it. It cannot be undone from this screen.\n\nHistory you reviewed:\n${summary}`
-            : `Mark this account's activity as a false alarm?\n\nNothing is punished. If the account is restricted, the restriction is lifted. The account leaves High Priority until new activity appears.\n\nHistory you reviewed:\n${summary}`;
+            : `Mark this account's activity as a false alarm?\n\nNothing is punished. If the account is restricted, the restriction is lifted and Cash on Delivery is turned back on. The account leaves High Priority until new activity appears.\n\nHistory you reviewed:\n${summary}`;
         if (!confirm(question)) return;
 
         decisionBusy = true;
@@ -1086,6 +1259,16 @@ include 'templates/header.php';
         document.getElementById('fraudHistoryOverlay').classList.remove('open');
     }
 
+    function openMethodologyModal() {
+        const modal = document.getElementById('methodologyModalOverlay');
+        if (modal) modal.classList.add('open');
+    }
+
+    function closeMethodologyModal() {
+        const modal = document.getElementById('methodologyModalOverlay');
+        if (modal) modal.classList.remove('open');
+    }
+
     /* =====================================================================
      * 11. WIRING EVERYTHING UP
      * =================================================================== */
@@ -1132,7 +1315,10 @@ include 'templates/header.php';
             if (e.target.id === 'fraudHistoryOverlay' && !decisionBusy) closeFraudActivityLog();
         });
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape' && !decisionBusy) closeFraudActivityLog();
+            if (e.key === 'Escape') {
+                if (!decisionBusy) closeFraudActivityLog();
+                closeMethodologyModal();
+            }
         });
 
         // Live listener: runs once now, then again every time ANY customer

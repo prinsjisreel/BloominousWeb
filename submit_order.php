@@ -37,6 +37,26 @@
  * This PREVENTS floods; the velocity check in section 4 DETECTS and
  * records unusual-but-allowed repeat orders for admin review.
  *
+ * --- SPENDING CHECKS (sections 4b and 4c) ---
+ * Before the order is scored, its total is compared with what is "usual":
+ *   4b. Rule 13 - returning customers (3+ orders in the last 60 days):
+ *       flagged when the total is above their own usual range, i.e. their
+ *       60-day average + 2 standard deviations (Chen et al., 2024,
+ *       features A15/A16).
+ *   4c. Rule 10 - new accounts (30 days old or less) with no usable
+ *       history: flagged when the total is above the shop's top 5% of
+ *       recent orders (PayMongo "outlier amounts"; Kaggle dataset lift
+ *       12.71).
+ * One order can trigger at most one of the two. What each check compared
+ * against is saved on the order (historyBaseline, shopAmountBaseline).
+ *
+ * --- COD GATING (section 3a) ---
+ * Fresh bouquets can't be resold if a COD delivery is refused. Accounts
+ * with an active restriction, a ban flag, or an account score of
+ * BLOOM_COD_BLOCK_SCORE (50) or more must pay online. The ORDER is never
+ * blocked; only the payment method. An admin "false alarm" decision
+ * restores COD until new activity is recorded.
+ *
  * --- RESTRICTIONS (section 2) ---
  * A restriction lasts at most BLOOM_RESTRICTION_MAX_DAYS (30) days. While
  * active, the customer must pass phone OTP to order. Once the 30 days
@@ -54,8 +74,9 @@
  *   - riskScore (0-100): evidence-tiered points per activity code
  * Both are saved on the ORDER (this order's activities only) and on the
  * CUSTOMER (whole account history). They decide REVIEW ORDER and how
- * loud the admin notification is. They NEVER block or restrict anyone,
- * and they are never sent back to the customer.
+ * loud the admin notification is. Their only customer-facing effect is
+ * the COD gating above. They never block an order or restrict anyone,
+ * and the values themselves are never sent back to the customer.
  *
  * The ORDER STILL GOES THROUGH. Deciding whether an activity is real
  * fraud is a human decision, made after reviewing the customer's history
@@ -121,6 +142,60 @@ function bloom_order_rate_limited_response(): void
         'code' => 'RATE_LIMITED',
         'message' => 'Too many order attempts. Please wait a few minutes and try again. If you already placed an order, check My Orders first.',
     ], 429);
+}
+
+/**
+ * The shop's most recent orders (any customer), newest first, with only
+ * the two fields rule 10 needs. One REST runQuery:
+ *   - orderBy createdAt DESC: a single-field sort, so Firestore needs no
+ *     extra composite index (orders without createdAt are left out).
+ *   - select status + total_price: smaller response, no personal data.
+ *
+ * Returns rows shaped like bloom_firestore_query_rest():
+ *   [['id' => ..., 'data' => ['status' => ..., 'total_price' => ...]], ...]
+ */
+function bloom_recent_shop_order_rows_rest(int $limit): array
+{
+    [$httpClient, $projectId, $accessToken] = bloom_firestore_rest_context();
+
+    $url = sprintf(
+        'https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents:runQuery',
+        $projectId
+    );
+
+    $response = $httpClient->request('POST', $url, [
+        'headers' => ['Authorization' => 'Bearer ' . $accessToken],
+        'json' => [
+            'structuredQuery' => [
+                'from' => [['collectionId' => 'orders']],
+                'select' => ['fields' => [
+                    ['fieldPath' => 'status'],
+                    ['fieldPath' => 'total_price'],
+                ]],
+                'orderBy' => [[
+                    'field' => ['fieldPath' => 'createdAt'],
+                    'direction' => 'DESCENDING',
+                ]],
+                'limit' => $limit,
+            ],
+        ],
+    ]);
+
+    $rows = json_decode((string) $response->getBody(), true) ?? [];
+
+    $results = [];
+    foreach ($rows as $row) {
+        if (!isset($row['document'])) {
+            continue; // runQuery sends empty progress entries
+        }
+        $parts = explode('/', $row['document']['name']);
+        $results[] = [
+            'id' => end($parts),
+            'data' => bloom_decode_firestore_fields($row['document']['fields'] ?? []),
+        ];
+    }
+
+    return $results;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -269,6 +344,19 @@ if ($isGift && $paymentMethod === 'cod') {
     bloom_json_response(['success' => false, 'message' => 'Cash on Delivery isn\'t available for gift orders. Please choose GCash or Maya.'], 400);
 }
 
+// COD gating (perishable-goods protection). The rule itself lives in
+// bloom_customer_cod_blocked() (includes/fraud_activity.php) so the
+// dashboards can show the same answer. It uses the ACTIVE restriction
+// state from section 2, so a restriction whose 30 days are over no longer
+// hides COD. The message never mentions scores or tiers.
+if ($paymentMethod === 'cod' && bloom_customer_cod_blocked($customer, $isRestricted)) {
+    bloom_json_response([
+        'success' => false,
+        'code' => 'COD_RESTRICTED',
+        'message' => 'Cash on Delivery isn\'t available for this account right now. Please choose GCash or Maya to complete your order.',
+    ], 403);
+}
+
 // Optional delivery instructions ("Order Notes" on web and app). Plain text
 // only, trimmed, and capped so nobody can stuff a huge blob into an order.
 $notes = trim(strip_tags((string) ($body['notes'] ?? '')));
@@ -319,7 +407,8 @@ if ($deviceHash !== null) {
     // alarm (fraud_review.php adds them to allowedUids). The device stays
     // banned for everyone else.
     $allowedUids = is_array($bannedDevice['allowedUids'] ?? null) ? $bannedDevice['allowedUids'] : [];
-    if ($bannedDevice !== null && !in_array($uid, $allowedUids, true)) {        $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'banned_device', 'Order placed from a previously banned device');
+    if ($bannedDevice !== null && !in_array($uid, $allowedUids, true)) {
+        $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'banned_device', 'Order placed from a previously banned device');
         $hasHardEvidence = true;
     }
 }
@@ -404,6 +493,69 @@ if ($recentOrderCount === 1) {
     $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'velocity_repeat', 'Repeat checkout within a 5-minute window');
 } elseif ($recentOrderCount >= 2) {
     $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'velocity_rapid', "Multiple rapid checkouts flagged ({$recentOrderCount} prior orders in under 5 minutes)");
+}
+
+// --- 4b. Rule 13: the customer's OWN history (Payment Fraud) ---
+// Reuses $pastOrderRows from section 4 (no extra query). The total is the
+// server-priced amount that will really be charged.
+$finalTotal = round($subtotal + $shippingFee, 2);
+$historyBaseline = bloom_build_history_baseline($pastOrderRows);
+
+if (bloom_history_amount_deviates($historyBaseline, $finalTotal)) {
+    $fraudActivities[] = bloom_fraud_activity(
+        'payment_fraud',
+        'history_amount_deviation',
+        sprintf(
+            'Order total P%s is above this customer\'s usual spending range (average P%s + 2 standard deviations = P%s, from %d orders in the last %d days)',
+            number_format($finalTotal, 2),
+            number_format((float) $historyBaseline['averageTotal'], 2),
+            number_format((float) $historyBaseline['upperLimit'], 2),
+            $historyBaseline['orderCount'],
+            $historyBaseline['windowDays']
+        )
+    );
+}
+
+// --- 4c. Rule 10: NEW account + unusually large order (Payment Fraud) ---
+// Only runs for customers WITHOUT enough history (the ones rule 13 can't
+// judge), and only looks things up step by step: account age first, then
+// the shop's recent orders only if the account is new enough. Every
+// lookup fails open: if it breaks, the order goes through unflagged.
+$accountAgeDays = null;
+$shopAmountBaseline = null;
+
+if (!$historyBaseline['hasEnoughHistory']) {
+    try {
+        $authRecord = bloom_auth()->getUser($uid);
+        $createdAt = $authRecord->metadata->createdAt ?? null;
+        $accountAgeDays = bloom_account_age_days($createdAt instanceof DateTimeInterface ? $createdAt : null);
+    } catch (\Throwable $e) {
+        error_log('submit_order.php: account age lookup failed, skipping rule 10: ' . $e->getMessage());
+    }
+
+    if ($accountAgeDays !== null && $accountAgeDays <= BLOOM_NEW_ACCOUNT_MAX_DAYS) {
+        try {
+            $shopAmountBaseline = bloom_build_shop_amount_baseline(
+                bloom_recent_shop_order_rows_rest(BLOOM_SHOP_BASELINE_ORDERS)
+            );
+        } catch (\Throwable $e) {
+            error_log('submit_order.php: shop order baseline failed, skipping rule 10: ' . $e->getMessage());
+        }
+
+        if ($shopAmountBaseline !== null
+            && bloom_new_account_high_value($accountAgeDays, $historyBaseline, $shopAmountBaseline, $finalTotal)) {
+            $fraudActivities[] = bloom_fraud_activity(
+                'payment_fraud',
+                'new_account_high_value',
+                sprintf(
+                    'New account (%d days old) placed a P%s order, above the shop\'s top 5%% of recent orders (P%s)',
+                    $accountAgeDays,
+                    number_format($finalTotal, 2),
+                    number_format((float) $shopAmountBaseline['threshold'], 2)
+                )
+            );
+        }
+    }
 }
 
 // --- 5. Geo mismatch (Account Theft) ---
@@ -503,7 +655,7 @@ $invoiceId = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx
 });
 
 // --- 8. Create the order (server-computed prices and fraud fields only) ---
-$finalTotal = round($subtotal + $shippingFee, 2);
+// $finalTotal was computed in section 4b (same formula).
 $orderCategories = array_values(array_unique(array_column($fraudActivities, 'category')));
 
 $orderId = bloom_firestore_add_document_rest('orders', [
@@ -531,6 +683,9 @@ $orderId = bloom_firestore_add_document_rest('orders', [
     'type' => 'WEB',
     'isGift' => $isGift,
     'isFirstOrder' => $isFirstOrder,
+    'historyBaseline' => $historyBaseline,          // what rule 13 compared against
+    'shopAmountBaseline' => $shopAmountBaseline,    // what rule 10 compared against (null = not needed)
+    'accountAgeDays' => $accountAgeDays,            // null = not looked up / unknown
     'fraudActivities' => $fraudActivities,
     'fraudFlags' => array_column($fraudActivities, 'reason'),
     'fraudCategories' => $orderCategories,
