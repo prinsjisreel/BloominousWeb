@@ -15,15 +15,21 @@
  *   { "action": "decide", "uid": "<customer uid>",
  *     "decision": "confirmed_fraud" | "false_alarm",
  *     "reason": "<at least 15 characters>",
- *     "seenTotalOrders": <int>, "seenFlaggedOrders": <int> }
+ *     "seenTotalOrders": <int>, "seenFlaggedOrders": <int>,
+ *     "markHousehold": <bool, optional, false_alarm only> }
  *     -> records the decision, in ONE transaction:
  *        confirmed_fraud: account blacklisted (status 'blocked') and
  *                         every device linked to it banned.
  *        false_alarm:     any restriction lifted, and this customer is
  *                         allow-listed on banned devices linked to them
  *                         (the device stays banned for everyone else,
- *                         see section 3c of submit_order.php). Nothing
- *                         else changes for the customer.
+ *                         see section 3c of submit_order.php).
+ *                         With markHousehold = true, the customer is also
+ *                         allow-listed on every delivery address that was
+ *                         flagged as address_reuse on their orders
+ *                         (known_households, see section 3f of
+ *                         submit_order.php). Other accounts using those
+ *                         addresses are still checked.
  *
  * WHY THE SAFEGUARDS (nothing is decided instantly or blindly):
  *   - Admins only, checked HERE from users/{uid}.role, not trusted from
@@ -60,6 +66,7 @@ const BLOOM_REVIEW_LIMIT_PER_ADMIN = 120;
 const BLOOM_REVIEW_REASON_MIN_CHARS = 15;
 const BLOOM_REVIEW_REASON_MAX_CHARS = 500;
 const BLOOM_REVIEW_MAX_DEVICES = 20;
+const BLOOM_REVIEW_MAX_HOUSEHOLD_ADDRESSES = 10;
 const BLOOM_REVIEW_DECISIONS = ['confirmed_fraud', 'false_alarm'];
 const BLOOM_REVIEW_ADMIN_ROLES = ['admin', 'super-admin'];
 
@@ -134,6 +141,40 @@ function bloom_review_collect_device_hashes(array $customer, array $orderRows): 
         }
     }
     return array_slice(array_values(array_unique($hashes)), 0, BLOOM_REVIEW_MAX_DEVICES);
+}
+
+/**
+ * Delivery addresses on this customer's orders that were actually flagged
+ * as address_reuse. Only these get the "known household" mark, never every
+ * address the customer ever used.
+ *
+ * Returns normalized addresses (same spelling submit_order.php saves).
+ * Older orders without normalizedAddress are normalized from 'address'.
+ */
+function bloom_review_collect_reused_addresses(array $orderRows): array
+{
+    $addresses = [];
+    foreach ($orderRows as $row) {
+        $order = is_array($row['data'] ?? null) ? $row['data'] : [];
+
+        $codes = bloom_clean_string_list($order['fraudCodes'] ?? []);
+        foreach (($order['fraudActivities'] ?? []) as $activity) {
+            if (is_array($activity) && is_string($activity['code'] ?? null)) {
+                $codes[] = $activity['code'];
+            }
+        }
+        if (!in_array('address_reuse', $codes, true)) {
+            continue;
+        }
+
+        $normalized = is_string($order['normalizedAddress'] ?? null) && $order['normalizedAddress'] !== ''
+            ? $order['normalizedAddress']
+            : bloom_normalize_address((string) ($order['address'] ?? ''));
+        if ($normalized !== '') {
+            $addresses[] = $normalized;
+        }
+    }
+    return array_slice(array_values(array_unique($addresses)), 0, BLOOM_REVIEW_MAX_HOUSEHOLD_ADDRESSES);
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -230,6 +271,10 @@ if (($customer['status'] ?? null) === 'blocked') {
     bloom_review_fail('ALREADY_BLOCKED', 'This account is already blacklisted.', 409);
 }
 
+// Optional "Same household" mark. Only a real true counts, and only for
+// a false alarm: a confirmed fraud must never clear an address.
+$markHousehold = ($body['markHousehold'] ?? false) === true && $decision === 'false_alarm';
+
 $accountCategories = bloom_clean_string_list($customer['fraudCategories'] ?? []);
 $hasEvidence = count($accountCategories) > 0 || $history['flaggedOrders'] > 0;
 if ($decision === 'confirmed_fraud' && !$hasEvidence) {
@@ -255,6 +300,7 @@ $review = [
     'totalOrdersAtReview' => $history['totalOrders'],
     'completedOrdersAtReview' => $history['completedOrders'],
     'flaggedOrdersAtReview' => $history['flaggedOrders'],
+    'markedHousehold' => $markHousehold,
 ];
 if (is_numeric($customer['riskScore'] ?? null)) {
     $review['riskScoreAtReview'] = (int) $customer['riskScore'];
@@ -267,8 +313,11 @@ $isConfirmed = ($decision === 'confirmed_fraud');
 $deviceHashes = bloom_review_collect_device_hashes($customer, $orderRows);
 $flagText = $isConfirmed ? BLOOM_REVIEW_FLAG_CONFIRMED : BLOOM_REVIEW_FLAG_FALSE_ALARM;
 
+// Addresses to clear as a known household (empty unless markHousehold).
+$householdAddresses = $markHousehold ? bloom_review_collect_reused_addresses($orderRows) : [];
+
 // --- 7. Write everything in ONE transaction: all of it, or none ---
-$outcome = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) use ($targetUid, $review, $flagText, $isConfirmed, $deviceHashes, $adminUid, $now) {
+$outcome = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) use ($targetUid, $review, $flagText, $isConfirmed, $deviceHashes, $householdAddresses, $adminUid, $now) {
     // Every READ first, then every WRITE (Firestore transaction rule).
     $fresh = $tx->get('customers', $targetUid);
     if ($fresh === null) {
@@ -287,6 +336,17 @@ $outcome = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) 
                 $bannedDocs[$hash] = $bannedDoc;
             }
         }
+    }
+
+    // Household mark: read each address's current allow-list (may be null
+    // when the address was never marked before).
+    $householdDocs = [];
+    foreach ($householdAddresses as $address) {
+        $docId = bloom_household_doc_id($address);
+        $householdDocs[$docId] = [
+            'address' => $address,
+            'doc' => $tx->get(BLOOM_KNOWN_HOUSEHOLDS_COLLECTION, $docId),
+        ];
     }
 
     $notes = [$flagText];
@@ -322,12 +382,25 @@ $outcome = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) 
                 'allowedUids' => bloom_merge_unique(bloom_clean_string_list($bannedDoc['allowedUids'] ?? []), [$targetUid]),
             ], true);
         }
+
+        // Known household: this customer may share these addresses
+        // without triggering address_reuse. Everyone else is still checked.
+        foreach ($householdDocs as $docId => $entry) {
+            $existing = is_array($entry['doc']) ? $entry['doc'] : [];
+            $tx->set(BLOOM_KNOWN_HOUSEHOLDS_COLLECTION, $docId, [
+                'normalizedAddress' => $entry['address'],
+                'allowedUids' => bloom_merge_unique(bloom_clean_string_list($existing['allowedUids'] ?? []), [$targetUid]),
+                'lastClearedBy' => $adminUid,
+                'lastClearedAt' => $now,
+            ], true);
+        }
     }
 
     return [
         'status' => 'ok',
         'restrictionLifted' => $restrictionLifted,
         'allowListedDevices' => count($bannedDocs),
+        'householdAddresses' => $isConfirmed ? 0 : count($householdDocs),
     ];
 });
 
@@ -340,6 +413,7 @@ if (($outcome['status'] ?? '') === 'blocked') {
 
 $restrictionLifted = (bool) ($outcome['restrictionLifted'] ?? false);
 $allowListedDevices = (int) ($outcome['allowListedDevices'] ?? 0);
+$householdAddressesCleared = (int) ($outcome['householdAddresses'] ?? 0);
 $bannedDeviceCount = $isConfirmed ? count($deviceHashes) : 0;
 
 // --- 8. Audit trail (best-effort: the decision is already saved) ---
@@ -348,7 +422,8 @@ try {
         ? "Confirmed fraud after review: account blacklisted, {$bannedDeviceCount} device(s) banned."
         : 'Reviewed fraud activity: marked as false alarm.'
             . ($restrictionLifted ? ' Restriction lifted.' : '')
-            . ($allowListedDevices > 0 ? " Customer allow-listed on {$allowListedDevices} banned device(s)." : '');
+            . ($allowListedDevices > 0 ? " Customer allow-listed on {$allowListedDevices} banned device(s)." : '')
+            . ($householdAddressesCleared > 0 ? " Marked as known household on {$householdAddressesCleared} shared address(es)." : '');
 
     bloom_firestore_add_document_rest('admin_actions', [
         'actorUid' => $adminUid,
@@ -363,6 +438,7 @@ try {
         'bannedDeviceCount' => $bannedDeviceCount,
         'restrictionLifted' => $restrictionLifted,
         'allowListedDevices' => $allowListedDevices,
+        'householdAddressesCleared' => $householdAddressesCleared,
         'source' => 'fraud_review.php',
         'timestamp' => $now,
     ]);
@@ -376,5 +452,6 @@ bloom_review_respond([
     'bannedDeviceCount' => $bannedDeviceCount,
     'restrictionLifted' => $restrictionLifted,
     'allowListedDevices' => $allowListedDevices,
+    'householdAddressesCleared' => $householdAddressesCleared,
     'review' => bloom_review_for_json($review),
 ]);

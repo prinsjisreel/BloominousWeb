@@ -50,6 +50,17 @@
  * One order can trigger at most one of the two. What each check compared
  * against is saved on the order (historyBaseline, shopAmountBaseline).
  *
+ * --- SHARED ADDRESSES (section 3f) ---
+ * Up to 3 different accounts may order to one address with no sign
+ * (families, roommates). The 4th account onward records address_reuse,
+ * UNLESS:
+ *   - TRUSTED HOUSEHOLD: an order to that address was already delivered
+ *     successfully (status delivered/completed), or
+ *   - KNOWN HOUSEHOLD: an admin cleared this customer for the address
+ *     (False Alarm + "Same household" in fraud_review.php), stored in
+ *     known_households/{sha256 of the address}.allowedUids, the same
+ *     per-customer allow-list idea as banned_devices.allowedUids.
+ *
  * --- COD GATING (section 3a) ---
  * Fresh bouquets can't be resold if a COD delivery is refused. Accounts
  * with an active restriction, a ban flag, or an account score of
@@ -456,15 +467,49 @@ try {
 }
 
 // --- 3f. Delivery address reuse (Fake Transaction) ---
-$normalizedAddress = strtolower(trim(preg_replace('/\s+/', ' ', (string) $body['address'])));
+// A shared address becomes a sign only when ALL of these are true
+// (rules in includes/fraud_activity.php):
+//   1. more than BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT (3) different accounts
+//      have ordered to it, counting this customer;
+//   2. no order to it was ever delivered successfully (no "trusted
+//      household" yet);
+//   3. an admin has not cleared THIS customer for it ("known household").
+// Check 3 needs a database read, so it runs only when 1 and 2 say "yes".
+$normalizedAddress = bloom_normalize_address((string) $body['address']);
+$addressKnownHousehold = false;
+$addressSharing = null;
 
 try {
     $addressReuseRows = bloom_firestore_query_rest('orders', 'normalizedAddress', $normalizedAddress);
-    foreach ($addressReuseRows as $reuseRow) {
-        $reuseData = $reuseRow['data'];
-        if (($reuseData['user_id'] ?? null) !== $uid) {
-            $fraudActivities[] = bloom_fraud_activity('fake_transaction', 'address_reuse', 'Delivery address already associated with a different account');
-            break;
+    $addressSharing = bloom_build_address_sharing($addressReuseRows, $uid);
+
+    if (bloom_address_sharing_is_suspicious($addressSharing)) {
+        try {
+            $household = bloom_firestore_get_document_rest(
+                BLOOM_KNOWN_HOUSEHOLDS_COLLECTION,
+                bloom_household_doc_id($normalizedAddress)
+            );
+            $addressKnownHousehold = bloom_household_allows($household, $uid);
+        } catch (\Throwable $e) {
+            // Could not read the household list: record the sign as usual.
+            // It is only 6 points and an admin reviews it, so this is the
+            // safe direction to fail.
+            error_log('Known-household lookup failed, recording address_reuse as usual: ' . $e->getMessage());
+        }
+
+        if (!$addressKnownHousehold) {
+            // The text must keep starting with "Delivery address already
+            // associated with a different account": both dashboards find
+            // this sign by those words.
+            $fraudActivities[] = bloom_fraud_activity(
+                'fake_transaction',
+                'address_reuse',
+                sprintf(
+                    'Delivery address already associated with a different account (%d accounts share it, limit %d, no successful delivery there yet)',
+                    $addressSharing['accountCount'],
+                    $addressSharing['limit']
+                )
+            );
         }
     }
 } catch (\Throwable $e) {
@@ -668,6 +713,8 @@ $orderId = bloom_firestore_add_document_rest('orders', [
     'email' => $body['email'] ?? '',
     'address' => $body['address'],
     'normalizedAddress' => $normalizedAddress,
+    'addressSharing' => $addressSharing,          // accounts at this address, successful deliveries, limit (null = check failed)
+    'knownHousehold' => $addressKnownHousehold,   // true = shared address skipped (admin-cleared household)
     'phone' => $normalizedPhone,
     'payment_method' => $paymentMethod,
     'notes' => $notes,

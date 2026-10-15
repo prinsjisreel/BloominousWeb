@@ -24,6 +24,10 @@
  *        Confirm Fraud     -> account blacklisted + its devices banned
  *        Mark False Alarm  -> restriction lifted (if any); account leaves
  *                             High Priority until new activity appears
+ *        + "Same household" -> (false alarm only, shown when the account
+ *                             has address_reuse) sends markHousehold, so
+ *                             fraud_review.php stops flagging the shared
+ *                             address for THIS account only
  *      Both need a written reason, an up-to-date history, and a
  *      confirmation. The server re-checks everything.
  *
@@ -179,6 +183,11 @@ include 'templates/header.php';
     #fhReason { width: 100%; border: 1px solid var(--border-color); border-radius: 12px; padding: 10px 12px; font-size: 0.82rem; font-family: inherit; resize: vertical; background: var(--surface); color: var(--text-main); outline: none; }
     #fhReason:focus { border-color: #f9a8d4; }
     .fh-reason-meta { display: flex; justify-content: flex-end; font-size: 0.65rem; color: #9ca3af; margin: 4px 0 10px; }
+    /* "Same household" tick box: only shown when the account has a shared-address sign */
+    .fh-household { display: none; align-items: flex-start; gap: 8px; font-size: 0.75rem; color: var(--text-main); background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; line-height: 1.5; }
+    .fh-household.visible { display: flex; }
+    .fh-household input { margin-top: 3px; accent-color: #059669; }
+    html[data-theme="dark"] .fh-household { background: rgba(5,150,105,0.12); border-color: rgba(5,150,105,0.4); }
     .fh-decision-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
     .decision-btn { padding: 9px 16px; border-radius: 20px; font-size: 0.68rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; border: none; cursor: pointer; color: #fff; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; transition: 0.15s; }
     .decision-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -342,6 +351,12 @@ include 'templates/header.php';
                     <p class="fh-meta" style="margin-bottom:8px;">Decide only after reading the transaction history and the order log above. Your reason is saved in the admin audit log.</p>
                     <textarea id="fhReason" rows="3" maxlength="500" placeholder="Explain your decision (at least 15 characters)..."></textarea>
                     <div class="fh-reason-meta"><span id="fhReasonCount">0 / 500</span></div>
+                    <!-- Shown by renderDecisionControls() only when this account has a
+                         shared-address sign. Sent as markHousehold with Mark False Alarm. -->
+                    <label id="fhHouseholdWrap" class="fh-household" for="fhHousehold">
+                        <input type="checkbox" id="fhHousehold">
+                        <span><strong>Same household:</strong> the shared delivery address belongs to this customer's family or home. Stop flagging it for this account. Applies to <em>Mark False Alarm</em> only; other accounts using the address are still checked.</span>
+                    </label>
                     <div class="fh-decision-buttons">
                         <button type="button" id="fhConfirmFraud" class="decision-btn decision-fraud" disabled>
                             <i class="fa-solid fa-user-slash"></i> Confirm Fraud
@@ -393,7 +408,7 @@ include 'templates/header.php';
                     <tr><td>15 points</td><td>Order placed from a device that was banned before. Prices sent from the customer's browser lower than the real prices.</td></tr>
                     <tr><td>10 points</td><td>Throwaway or internet-only phone number. Two or more other orders by the same account within 5 minutes. A returning customer's order well above their usual spending range. A new account placing an unusually large order.</td></tr>
                     <tr><td>8 points</td><td>Hidden or high-risk internet connection (VPN, proxy, Tor). Delivery point more than 50 km from the branch.</td></tr>
-                    <tr><td>6 points</td><td>One other order by the same account within 5 minutes (people sometimes reorder a forgotten item). Phone number or delivery address already used by a different account. Risky email address at sign-up.</td></tr>
+                    <tr><td>6 points</td><td>One other order by the same account within 5 minutes (people sometimes reorder a forgotten item). Phone number already used by a different account. Delivery address shared by more than 3 accounts with no successful delivery there yet. Risky email address at sign-up.</td></tr>
                 </tbody>
             </table>
             <p class="guide-note">The point values are starting values chosen by the BLOOM team from the research. They will be adjusted once enough real cases have been reviewed by staff.</p>
@@ -428,6 +443,8 @@ include 'templates/header.php';
             <ul>
                 <li><strong>Confirm Fraud:</strong> the account is blacklisted and its devices are banned.</li>
                 <li><strong>Mark False Alarm:</strong> any restriction is lifted and Cash on Delivery comes back, until a new warning sign appears.</li>
+                <li><strong>Shared addresses:</strong> up to 3 accounts may order to one address without any warning sign. An address that has already received a successful delivery counts as a trusted household and is never flagged for sharing.</li>
+                <li><strong>Same household (tick box):</strong> when a shared delivery address belongs to one family, ticking it with Mark False Alarm stops that address from being flagged for this account. Other accounts using the address are still checked.</li>
             </ul>
         </div>
 
@@ -1121,6 +1138,15 @@ include 'templates/header.php';
         document.getElementById('fhReasonCount').textContent = `${length} / ${REASON_MAX_CHARS}${length < REASON_MIN_CHARS ? ` (min ${REASON_MIN_CHARS})` : ''}`;
     }
 
+    // Does this account carry a shared-address sign? Checks the code first
+    // (new records), then the reason text (older records without codes).
+    function hasAddressReuse(account) {
+        if (!account) return false;
+        const codes = Array.isArray(account.doc.fraudCodes) ? account.doc.fraudCodes : [];
+        if (codes.includes('address_reuse')) return true;
+        return account.activity.some(f => f.text.toLowerCase().includes('delivery address already associated'));
+    }
+
     // Shows/hides and enables/disables the decision controls. Never
     // re-renders the textarea, so the reason being typed is kept.
     function renderDecisionControls() {
@@ -1129,6 +1155,13 @@ include 'templates/header.php';
 
         document.getElementById('fhDecisionBlocked').style.display = isBlocked ? 'block' : 'none';
         document.getElementById('fhDecisionForm').style.display = isBlocked ? 'none' : 'block';
+
+        // "Same household" only makes sense when an address was flagged.
+        const householdWrap = document.getElementById('fhHouseholdWrap');
+        const showHousehold = hasAddressReuse(account);
+        householdWrap.classList.toggle('visible', showHousehold);
+        if (!showHousehold) document.getElementById('fhHousehold').checked = false;
+        document.getElementById('fhHousehold').disabled = decisionBusy;
 
         const reasonOk = document.getElementById('fhReason').value.trim().length >= REASON_MIN_CHARS;
         const ready = !!account && !!openLogHistory && !decisionBusy;
@@ -1154,10 +1187,18 @@ include 'templates/header.php';
             return;
         }
 
+        // Sent only with a false alarm, and only when the box is visible.
+        const markHousehold = decision === 'false_alarm'
+            && hasAddressReuse(account)
+            && document.getElementById('fhHousehold').checked;
+
         const summary = buildHistorySummaryText(history);
+        const householdLine = markHousehold
+            ? '\n\nSame household: the shared delivery address will no longer be flagged for this account. Other accounts using it are still checked.'
+            : '';
         const question = decision === 'confirmed_fraud'
             ? `Confirm fraud for this account?\n\nThis will BLACKLIST the account and BAN every device linked to it. It cannot be undone from this screen.\n\nHistory you reviewed:\n${summary}`
-            : `Mark this account's activity as a false alarm?\n\nNothing is punished. If the account is restricted, the restriction is lifted and Cash on Delivery is turned back on. The account leaves High Priority until new activity appears.\n\nHistory you reviewed:\n${summary}`;
+            : `Mark this account's activity as a false alarm?\n\nNothing is punished. If the account is restricted, the restriction is lifted and Cash on Delivery is turned back on. The account leaves High Priority until new activity appears.${householdLine}\n\nHistory you reviewed:\n${summary}`;
         if (!confirm(question)) return;
 
         decisionBusy = true;
@@ -1171,11 +1212,13 @@ include 'templates/header.php';
                 decision,
                 reason,
                 seenTotalOrders: history.totalOrders,
-                seenFlaggedOrders: history.flaggedOrders
+                seenFlaggedOrders: history.flaggedOrders,
+                markHousehold
             });
             if (openLogUid !== uid) return;
 
             reasonEl.value = '';
+            document.getElementById('fhHousehold').checked = false;
             updateReasonCount();
             if (decision === 'confirmed_fraud') {
                 setDecisionMessage(`Decision saved. Account blacklisted; ${data.bannedDeviceCount} device(s) banned.`, 'success');
@@ -1183,6 +1226,7 @@ include 'templates/header.php';
                 const extras = [];
                 if (data.restrictionLifted) extras.push('restriction lifted');
                 if (data.allowListedDevices > 0) extras.push(`allowed on ${data.allowListedDevices} banned device(s)`);
+                if (data.householdAddressesCleared > 0) extras.push(`known household on ${data.householdAddressesCleared} shared address(es)`);
                 setDecisionMessage(`Decision saved as false alarm${extras.length ? ' (' + extras.join(', ') + ')' : ''}.`, 'success');
             }
             await loadHistory(uid); // refreshes "Last review"
@@ -1224,6 +1268,7 @@ include 'templates/header.php';
         document.getElementById('fhCustomerUid').innerText = 'UID: ' + uid;
         document.getElementById('fhOrderList').innerHTML = '<div class="fh-empty">Loading order log...</div>';
         document.getElementById('fhReason').value = '';
+        document.getElementById('fhHousehold').checked = false;
         document.getElementById('fhLastReview').innerHTML = '';
         updateReasonCount();
         setDecisionMessage('', '');

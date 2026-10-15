@@ -47,6 +47,15 @@
  *                                         (recent orders, top 5%)   - rule 10
  *   - bloom_new_account_high_value():     new account + unusually large order?
  *   - bloom_customer_cod_blocked():       should COD be hidden for this account?
+ *   - bloom_normalize_address():          one spelling of an address, so the
+ *                                         same place always matches
+ *   - bloom_household_doc_id():           address -> known_households doc id
+ *   - bloom_household_allows():           was this customer cleared as part
+ *                                         of the household at this address?
+ *   - bloom_build_address_sharing():      how many accounts share an address,
+ *                                         and has it had a successful delivery?
+ *   - bloom_address_sharing_is_suspicious(): over the 3-account limit with
+ *                                         no successful delivery?
  *
  * Used by:
  *   - submit_order.php         (records activities at checkout)
@@ -214,6 +223,47 @@ const BLOOM_SHOP_BASELINE_MIN_ORDERS = 20;
  * blocked. DESIGN PARAMETER; mirrored as COD_BLOCK_SCORE in the dashboards.
  */
 const BLOOM_COD_BLOCK_SCORE = 50;
+
+/*
+ * KNOWN HOUSEHOLDS - shared-address false alarms.
+ * Family members who live together and order to the same address trigger
+ * address_reuse, even though nothing is wrong. When an admin marks such an
+ * account as a False Alarm and ticks "Same household" (fraud_review.php),
+ * the account's uid is added to known_households/{address id}.allowedUids.
+ * submit_order.php then skips address_reuse for that uid at that address.
+ *
+ * Same idea as banned_devices.allowedUids: the decision is per customer,
+ * made by a person, and every OTHER account using the address is still
+ * checked. No account count or threshold is guessed.
+ *
+ * Server-only collection: written through the REST helpers (service
+ * account). firestore.rules must not allow client reads or writes.
+ */
+const BLOOM_KNOWN_HOUSEHOLDS_COLLECTION = 'known_households';
+
+/*
+ * SHARED ADDRESS RULE (address_reuse) - when does sharing become a sign?
+ *
+ *   BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT = 3  DESIGN PARAMETER: up to 3
+ *       different accounts may order to one address without any sign
+ *       (a family, roommates). The 4th account onward records
+ *       address_reuse. Note for the paper: the average Filipino household
+ *       is 4.1 people (PSA 2020 Census), so large families can pass 3;
+ *       the two exceptions below exist for exactly that case.
+ *
+ * Exceptions (no sign even above the limit):
+ *   1. TRUSTED HOUSEHOLD - the address already has at least one SUCCESSFUL
+ *      order (status in BLOOM_COMPLETED_ORDER_STATUSES: the bouquet was
+ *      delivered and accepted). A real delivery to that door is proof the
+ *      household exists. A fraud ring would have to buy and accept a real
+ *      order first, which costs them money.
+ *   2. KNOWN HOUSEHOLD - an admin cleared this customer for the address
+ *      (fraud_review.php, False Alarm + "Same household").
+ *
+ * Every other sign (device, phone, network, spending, speed, distance)
+ * still runs for these customers.
+ */
+const BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT = 3;
 
 /**
  * Builds one fraud activity record.
@@ -484,6 +534,111 @@ function bloom_build_fraud_customer_update(array $customer, array $activities, $
         'riskLevel' => bloom_fraud_risk_level($mergedCategories, $mergedCodes),
         'lastFraudActivityAt' => $now,
     ];
+}
+
+/**
+ * One spelling of a delivery address: lower case, single spaces, no
+ * spaces at the ends. "Blk 5  Lot 2, Imus" and "blk 5 lot 2, imus" become
+ * the same text, so they match.
+ *
+ * MUST stay identical to the formula orders were saved with (the
+ * normalizedAddress field), or old orders stop matching new ones.
+ */
+function bloom_normalize_address(string $address): string
+{
+    return strtolower(trim(preg_replace('/\s+/', ' ', $address)));
+}
+
+/**
+ * Document id for an address in known_households.
+ * An address can contain "/" (forbidden in Firestore ids) and can be
+ * long, so it is turned into a fixed 64-character SHA-256 fingerprint.
+ * The same address always gives the same id.
+ */
+function bloom_household_doc_id(string $normalizedAddress): string
+{
+    return hash('sha256', $normalizedAddress);
+}
+
+/**
+ * Was this customer cleared by an admin as part of the household at this
+ * address? $householdDoc is the known_households document, or null when
+ * the address has never been marked.
+ */
+function bloom_household_allows(?array $householdDoc, string $uid): bool
+{
+    if ($householdDoc === null) {
+        return false;
+    }
+    $allowedUids = bloom_clean_string_list($householdDoc['allowedUids'] ?? []);
+    return in_array($uid, $allowedUids, true);
+}
+
+/**
+ * Describes who has ordered to one delivery address.
+ *
+ * $addressRows  rows from bloom_firestore_query_rest('orders',
+ *               'normalizedAddress', $normalizedAddress). The order being
+ *               placed right now is NOT in this list yet.
+ * $uid          the customer placing the order now.
+ *
+ * Returns:
+ *   accountCount      different accounts at this address, INCLUDING the
+ *                     current customer
+ *   otherAccounts     different accounts at this address, NOT counting
+ *                     the current customer
+ *   successfulOrders  orders to this address that were delivered/completed
+ *                     (any account)
+ *   trustedHousehold  true when successfulOrders >= 1
+ *   overLimit         true when accountCount > BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT
+ *   limit             the limit used (saved on the order for admins)
+ */
+function bloom_build_address_sharing(array $addressRows, string $uid): array
+{
+    $accounts = [$uid => true];
+    $successfulOrders = 0;
+
+    foreach ($addressRows as $row) {
+        $order = is_array($row['data'] ?? null) ? $row['data'] : [];
+
+        $owner = $order['user_id'] ?? null;
+        if (is_string($owner) && $owner !== '') {
+            $accounts[$owner] = true;
+        }
+
+        $status = strtolower(trim((string) ($order['status'] ?? '')));
+        if (in_array($status, BLOOM_COMPLETED_ORDER_STATUSES, true)) {
+            $successfulOrders++;
+        }
+    }
+
+    $accountCount = count($accounts);
+
+    return [
+        'accountCount' => $accountCount,
+        'otherAccounts' => $accountCount - 1,
+        'successfulOrders' => $successfulOrders,
+        'trustedHousehold' => $successfulOrders > 0,
+        'overLimit' => $accountCount > BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT,
+        'limit' => BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT,
+    ];
+}
+
+/**
+ * Should this shared address be recorded as address_reuse?
+ * (Before the admin "known household" check, which needs a database read
+ * and is done by submit_order.php only when this returns true.)
+ *
+ * True only when ALL of these hold:
+ *   - another account has ordered to this address
+ *   - more accounts share it than BLOOM_ADDRESS_SHARED_ACCOUNT_LIMIT
+ *   - no order to this address has ever been delivered successfully
+ */
+function bloom_address_sharing_is_suspicious(array $sharing): bool
+{
+    return ($sharing['otherAccounts'] ?? 0) > 0
+        && ($sharing['overLimit'] ?? false) === true
+        && ($sharing['trustedHousehold'] ?? false) !== true;
 }
 
 /**
