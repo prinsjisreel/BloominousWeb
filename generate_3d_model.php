@@ -1,114 +1,122 @@
 <?php
 /**
- * BLOOMINOUS - 3D Realism: Step 1 (Submit)
- *
- * Receives the admin's uploaded flower photo and submits it to Hyper3D's
- * Rodin API. This is the ONLY file that ever touches the real Hyper3D
- * API key -- the browser only ever talks to THIS endpoint, never to
- * Hyper3D directly. Same "client never holds the secret" pattern as
- * PaymentService and the Firebase Admin SDK calls elsewhere in this app.
+ * BLOOMINOUS - 3D Realism: Step 1 (Submit to Tripo v3)
  */
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+
+header('Content-Type: application/json');
+
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
-if (!isset($_SESSION['admin_id'])) {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Not authenticated']);
-    exit();
+function fail($message, $status = 500) {
+    http_response_code($status);
+    echo json_encode(['success' => false, 'message' => $message]);
+    exit;
 }
 
-// ============================================================
-// PASTE YOUR REAL HYPER3D API KEY HERE. Never commit the real
-// value to source control -- treat this file the same way you'd
-// treat payment_service.php's secret key constant.
-// ============================================================
-define('HYPER3D_API_KEY', 'PASTE_YOUR_HYPER3D_API_KEY_HERE');
-// ============================================================
+if (!isset($_SESSION['admin_id'])) {
+    fail('Not authenticated', 401);
+}
 
-if (HYPER3D_API_KEY === 'PASTE_YOUR_HYPER3D_API_KEY_HERE') {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'message' => 'Hyper3D API key has not been configured on the server yet.']);
-    exit();
+$configPath = __DIR__ . '/config.local.php';
+if (!file_exists($configPath)) {
+    fail('Missing config.local.php');
+}
+require_once $configPath;
+
+$apiKey = getenv('TRIPO_API_KEY');
+if (!$apiKey) {
+    fail('TRIPO_API_KEY is empty.');
+}
+if (strpos($apiKey, 'tcli_') === 0) {
+    fail('Use your Secret API Key (tsk_), not Client ID.');
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_FILES['image'])) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'No image file was received.']);
-    exit();
+    fail('No image file received.', 400);
 }
 
-$uploadedFile = $_FILES['image'];
-if ($uploadedFile['error'] !== UPLOAD_ERR_OK) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Upload failed (error code ' . $uploadedFile['error'] . ').']);
-    exit();
+$file = $_FILES['image'];
+if ($file['error'] !== UPLOAD_ERR_OK) {
+    fail('Image upload failed: ' . $file['error'], 400);
 }
 
-// 10MB cap -- generous for a phone/camera photo, small enough to fail
-// fast on an accidental huge file rather than tying up the request.
-if ($uploadedFile['size'] > 10 * 1024 * 1024) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Image is too large (max 10MB).']);
-    exit();
-}
-
-$allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-$mimeType = mime_content_type($uploadedFile['tmp_name']);
-if (!in_array($mimeType, $allowedTypes, true)) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Please upload a JPEG, PNG, or WEBP image.']);
-    exit();
+$mime = mime_content_type($file['tmp_name']);
+$allowed = ['image/jpeg', 'image/png', 'image/webp'];
+if (!in_array($mime, $allowed, true)) {
+    fail('Please upload a JPG, PNG, or WEBP image.', 400);
 }
 
 try {
-    $curlFile = new CURLFile($uploadedFile['tmp_name'], $mimeType, $uploadedFile['name']);
+    // STEP 1: Upload image to Tripo v3
+    $curlFile = new CURLFile($file['tmp_name'], $mime, basename($file['name']));
+    
+    $ch = curl_init('https://openapi.tripo3d.ai/v3/files');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $apiKey],
+        CURLOPT_POSTFIELDS => ['file' => $curlFile],
+        CURLOPT_TIMEOUT => 60,
+    ]);
 
-    $ch = curl_init('https://api.hyper3d.com/api/v2/rodin');
+    $uploadBody = curl_exec($ch);
+    $uploadStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($uploadBody === false || $uploadStatus !== 200) {
+        throw new Exception('Tripo v3 upload failed (HTTP ' . $uploadStatus . '): ' . $uploadBody);
+    }
+
+    $uploadData = json_decode($uploadBody, true);
+    // v3 returns file_token
+    $fileToken = $uploadData['data']['file_token'] ?? null;
+    if (!$fileToken) {
+        throw new Exception('Tripo v3 did not return a file_token. Response: ' . $uploadBody);
+    }
+
+    // STEP 2: Generate 3D Model with v3.1
+    $payload = [
+        'input' => $fileToken, // v3 uses 'input' instead of 'file'
+        'model' => 'v3.1-20260211', // The latest model you wanted
+        'texture' => true,
+        'pbr' => true
+    ];
+
+    $ch = curl_init('https://openapi.tripo3d.ai/v3/generation/image-to-model');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST => true,
         CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . HYPER3D_API_KEY,
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json'
         ],
-        // Gen-2.5-Medium is a reasonable default balance of quality vs.
-        // generation time for a product-catalog flower model -- not a
-        // hard requirement, just a sensible starting tier.
-        CURLOPT_POSTFIELDS => [
-            'images' => $curlFile,
-            'tier' => 'Gen-2.5-Medium',
-            'geometry_file_format' => 'glb',
-        ],
+        CURLOPT_POSTFIELDS => json_encode($payload),
         CURLOPT_TIMEOUT => 60,
     ]);
 
-    $responseBody = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
+    $taskBody = curl_exec($ch);
+    $taskStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($responseBody === false) {
-        throw new Exception('Could not reach Hyper3D: ' . $curlError);
+    if ($taskBody === false || $taskStatus !== 200) {
+        throw new Exception('Tripo v3 generation rejected (HTTP ' . $taskStatus . '): ' . $taskBody);
     }
 
-    $data = json_decode($responseBody, true);
-
-    // Hyper3D returns HTTP 201 on successful submission, with a
-    // top-level uuid and jobs.subscription_key -- NOT a plain 200.
-    if (($httpCode !== 200 && $httpCode !== 201) || !empty($data['error']) || empty($data['uuid'])) {
-        $errMsg = $data['error'] ?? $data['message'] ?? ('HTTP ' . $httpCode);
-        throw new Exception('Hyper3D rejected the submission: ' . $errMsg);
-    }
-
-    $subscriptionKey = $data['jobs']['subscription_key'] ?? null;
-    if (!$subscriptionKey) {
-        throw new Exception('Hyper3D did not return a subscription key to poll.');
+    $taskData = json_decode($taskBody, true);
+    $taskId = $taskData['data']['task_id'] ?? null;
+    if (!$taskId) {
+        throw new Exception('Tripo v3 did not return a task ID. Response: ' . $taskBody);
     }
 
     echo json_encode([
         'success' => true,
-        'uuid' => $data['uuid'],
-        'subscriptionKey' => $subscriptionKey,
+        'taskId' => $taskId,
+        'message' => 'Generation task submitted to v3 API.'
     ]);
-} catch (\Throwable $e) {
-    http_response_code(502);
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+
+} catch (Throwable $e) {
+    error_log('Tripo v3 generation error: ' . $e->getMessage());
+    fail($e->getMessage(), 502);
 }

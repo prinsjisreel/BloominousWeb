@@ -532,7 +532,7 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
 
         <!-- Shown only when linkWithPhoneNumber fails because real SMS isn't
              active yet on this Firebase project (billing not enabled). Lists
-             registered test numbers as the current working alternative —
+             registered test numbers as the current working alternative — 
              never auto-selects one. -->
         <div id="billingNotEnabledNotice" class="hidden text-left mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
             <p class="text-[11px] font-bold text-amber-800 leading-relaxed">Automated SMS isn't active yet for this project.</p>
@@ -686,6 +686,15 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         let codRestrictionReason = '';
         let restrictedUntilText = 'for 30 days';
         let otpVerifiedThisSession = false;
+
+        // COD SESSION FIX — re-entry guard. Prevents a double-click on "Place
+        // Order" (very common when the button feels slow because the network
+        // is slow) from firing TWO submit_order.php POSTs. Two POSTs from one
+        // click is exactly what trips submit_order.php's per-UID rate limiter
+        // (5 orders/10min), which the user then sees as "too many order
+        // attempts" — indistinguishable from a session problem. One click,
+        // one POST, always.
+        let submittingOrder = false;
 
         function updatePaymentAvailability() {
             if (sendAsGift) {
@@ -1894,7 +1903,12 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         async function startOnlinePaymentFor(orderId) {
             setButtonBusy('Opening ' + (paymentDropdown.value === 'maya' ? 'Maya' : 'GCash') + '...');
             try {
-                const idToken = await auth.currentUser.getIdToken();
+                // COD SESSION FIX — forceRefresh, so a stale cached token can
+                // never reach create_payment_session.php either. This mirrors
+                // the token refresh we now do in submitOrder() itself; both
+                // sides of the payment flow are now guaranteed to hold a
+                // token with plenty of life left.
+                const idToken = await auth.currentUser.getIdToken(true);
                 await window.bloomStartOnlinePayment({
                     orderId: orderId,
                     paymentMethod: paymentDropdown.value,
@@ -2011,6 +2025,15 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         });
 
         async function submitOrder() {
+            // COD SESSION FIX — re-entry guard. Two rapid clicks from a slow
+            // network (or a user who thinks the first click "didn't work")
+            // used to fire TWO submit_order.php POSTs. The second hits
+            // submit_order.php's per-UID rate limiter (5 orders/10min) and
+            // shows as "too many order attempts" — the classic "session
+            // problem" symptom on COD. Now the second click is silently
+            // ignored while the first is still in flight.
+            if (submittingOrder) return;
+
             if (cartStatus !== 'ready') {
                 return showToast('Your cart is still loading. Please wait a moment and try again.', 'error');
             }
@@ -2035,12 +2058,24 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 }
             }
 
+            submittingOrder = true;
             setButtonBusy('Analyzing Security Protocols...');
 
             try {
                 // Fraud scoring, the restriction gate, and the order/customer
                 // writes all happen server-side in submit_order.php.
-                const idToken = await auth.currentUser.getIdToken();
+                //
+                // COD SESSION FIX — forceRefresh=true. This is the direct fix
+                // for the "COD gives a session error but GCash/Maya works"
+                // symptom: the previous code used the CACHED token, which on
+                // COD was whatever remained from login (potentially seconds
+                // from expiry). GCash/Maya never hit it because
+                // startOnlinePaymentFor() re-fetched a fresh token inside
+                // bloomStartOnlinePayment — COD had no such second chance.
+                // Forcing a refresh guarantees submit_order.php's
+                // bloom_verify_id_token() sees a token with a full 60-minute
+                // window, every time, on every payment method.
+                const idToken = await auth.currentUser.getIdToken(true);
                 const deviceHash = await window.bloomGetDeviceId();
 
                 const response = await fetch('../submit_order.php', {
@@ -2072,6 +2107,19 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 // Guard against a PHP error page (HTML) instead of JSON.
                 let result = {};
                 try { result = await response.json(); } catch (_) { result = {}; }
+
+                // COD SESSION FIX — explicit 401 handling. Previously a 401
+                // (expired token, or a session rejected by
+                // bloom_verify_id_token) fell into the generic
+                // "Transaction failed" toast, which did not tell the user
+                // what to do. Now it produces a clear, actionable message
+                // and sends them to login with the correct reason code, so
+                // they can retry without losing the cart.
+                if (response.status === 401) {
+                    sessionStorage.setItem('bloom_shop_error', 'Your login expired. Please sign in again to complete your order — your cart is saved.');
+                    window.location.href = '../index.php?error=session_expired';
+                    return;
+                }
 
                 if (!result.success) {
                     if (result.code === 'COD_RESTRICTED') {
@@ -2114,6 +2162,12 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
             } catch (error) {
                 showToast("Transaction Failed: " + error.message, 'error');
                 setButtonReady();
+            } finally {
+                // COD SESSION FIX — release the re-entry guard once the request
+                // is no longer in flight. Placed in `finally` so the guard is
+                // cleared on success (where we navigate away) AND on failure
+                // (where the user must be able to retry).
+                submittingOrder = false;
             }
         }
 
@@ -2161,7 +2215,16 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         refreshPlaceOrderLabel();
         fetchRegions().catch(() => {}); // warm the cache so the popup opens instantly
         startCartSync();
-        restorePendingOnlineOrder();
+        // COD SESSION FIX — wrapped so a failure while checking a pending
+        // order can never block the page from finishing its boot (the previous
+        // version silently ignored this, but an uncaught promise rejection in
+        // a top-level script is exactly the kind of thing that "feels like a
+        // session problem" to the user — blank fields, dead buttons, no clear
+        // error). Failures here are non-fatal: they just mean there was no
+        // pending order to offer to resume.
+        restorePendingOnlineOrder().catch(err => {
+            console.warn('restorePendingOnlineOrder() failed (non-fatal):', err);
+        });
     }
 </script>
 </body>

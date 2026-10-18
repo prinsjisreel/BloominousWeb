@@ -101,6 +101,11 @@ include 'templates/header.php';
     .pod-actions button { flex: 1; padding: 16px; border-radius: 18px; font-weight: 800; border: none; cursor: pointer; }
     .pod-cancel { background: #f5f5f5; color: var(--text-light); }
     .pod-confirm { background: var(--primary); color: #fff; }
+
+    /* POS Proof of Order Image Viewer */
+    #imagePreviewOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.85); z-index: 9999; align-items: center; justify-content: center; padding: 20px; cursor: pointer; }
+    #imagePreviewOverlay.open { display: flex; }
+    #imagePreviewOverlay img { max-width: 100%; max-height: 90vh; border-radius: 16px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
 </style>
 
 <div class="details-content">
@@ -167,8 +172,7 @@ include 'templates/header.php';
                 <p class="text-[11px] font-bold text-gray-400 mb-3" id="channelHint">...</p>
                 <form id="updateStatusForm">
                     <select id="statusSelect" class="status-select">
-                        <!-- options populated by JS: online orders get Pending/Processing/In Transit/Confirmed,
-                             walk-in orders get Pending/Processing/Confirmed/Cancelled. See ORDER_STATUS_OPTIONS. -->
+                        <!-- options populated by JS -->
                     </select>
                     <button type="submit" id="updateBtn" class="btn-update">
                         Update Status
@@ -190,8 +194,21 @@ include 'templates/header.php';
                     </div>
                 </div>
             </div>
+
+            <!-- NEW: POS Proof of Order -->
+            <div id="proofOfOrderCard" class="card hidden">
+                <h3 class="card-title"><i class="fa-solid fa-camera"></i> Proof of Order</h3>
+                <div id="proofOfOrderContainer" class="mt-4">
+                    <!-- Image injected via JS -->
+                </div>
+            </div>
         </div>
     </div>
+</div>
+
+<!-- Full screen image viewer for POS Proof of Order -->
+<div id="imagePreviewOverlay" onclick="if(event.target === this) this.classList.remove('open')">
+    <img id="imagePreviewImg" src="" alt="Proof of Order">
 </div>
 
 <div id="vrOverlay">
@@ -291,12 +308,6 @@ include 'templates/header.php';
     let vrScope = 'full';
     let vrOrderData = null;
 
-    // Online (type 'WEB') vs Walk-in (type 'POS') orders follow different lifecycles:
-    // - Online orders are delivered by a rider, so "Confirmed" must be backed by proof
-    //   of delivery (POD photo) — it can never be picked freely from the dropdown.
-    // - Walk-in orders are handed over in person at the counter, so no POD is needed,
-    //   and only walk-in staff can mark an order Cancelled (= voided) from here; online
-    //   customers cancel their own orders from their account, not from this panel.
     const ORDER_STATUS_OPTIONS = {
         online: ['Pending', 'Processing', 'In Transit', 'Confirmed'],
         walkin: ['Pending', 'Processing', 'Confirmed', 'Cancelled']
@@ -308,7 +319,6 @@ include 'templates/header.php';
         const options = online ? ORDER_STATUS_OPTIONS.online : ORDER_STATUS_OPTIONS.walkin;
         const select = document.getElementById('statusSelect');
         const current = (o.status || 'Pending');
-        // Normalize casing so it matches one of our option values (older docs may store lowercase).
         const currentMatch = options.find(opt => opt.toLowerCase() === current.toLowerCase()) || options[0];
         select.innerHTML = options.map(opt => `<option value="${opt}" ${opt === currentMatch ? 'selected' : ''}>${opt}</option>`).join('');
         document.getElementById('channelHint').innerText = online
@@ -316,8 +326,12 @@ include 'templates/header.php';
             : 'Walk-in order — Cancelled is treated as a voided sale.';
     }
 
+    function showProofImage(url) {
+        document.getElementById('imagePreviewImg').src = url;
+        document.getElementById('imagePreviewOverlay').classList.add('open');
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
-        // Real-time listener for order details
         db.collection('orders').doc(orderId).onSnapshot(doc => {
             if (!doc.exists) {
                 alert('Order not found!');
@@ -329,8 +343,6 @@ include 'templates/header.php';
             const status = o.status || 'Pending';
              
             document.getElementById('orderStatusBadge').innerText = status;
-            
-            // Update badge class
             const badge = document.getElementById('orderStatusBadge');
             badge.className = 'badge badge-' + status.toLowerCase();
             
@@ -341,14 +353,29 @@ include 'templates/header.php';
             document.getElementById('deliveryAddress').innerText = o.address || 'No delivery address provided';
             
             const date = o.timestamp ? o.timestamp.toDate().toLocaleString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: 'numeric', 
-                hour: '2-digit', 
-                minute: '2-digit',
-                hour12: true 
+                month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true 
             }) : 'N/A';
             document.getElementById('transactionDate').innerText = date;
+
+            // Load POS Proof of Order
+            const proofUrl = o.proofPhotoUrl || o.proofOfOrderPhoto;
+            const proofCard = document.getElementById('proofOfOrderCard');
+            const proofContainer = document.getElementById('proofOfOrderContainer');
+            
+            if (proofUrl) {
+                proofCard.classList.remove('hidden');
+                proofContainer.innerHTML = `
+                    <div style="cursor:pointer; position:relative; border-radius:16px; overflow:hidden;" onclick="showProofImage('${proofUrl.replace(/'/g, "\\'")}')">
+                        <img src="${proofUrl}" style="width:100%; height:180px; object-fit:cover; transition:0.3s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                        <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.6); color:white; font-size:10px; font-weight:bold; padding:8px; text-align:center; backdrop-filter: blur(4px);">
+                            <i class="fa-solid fa-magnifying-glass-plus"></i> View Full Image
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-2 italic text-center">Captured via POS Scanner</p>
+                `;
+            } else {
+                proofCard.classList.add('hidden');
+            }
 
             // Load Items
             let itemsHtml = '';
@@ -392,9 +419,6 @@ include 'templates/header.php';
                 const newStatus = document.getElementById('statusSelect').value;
                 const online = isOnlineOrder(vrOrderData || {});
 
-                // Online "Confirmed" is never a plain write — it must go through the
-                // rider's proof-of-delivery capture first. The status only flips to
-                // Confirmed automatically once that proof is submitted.
                 if (online && newStatus === 'Confirmed') {
                     openPodCapture(orderId);
                     btn.disabled = false;
@@ -407,8 +431,6 @@ include 'templates/header.php';
                     updated_at: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 if (!online && newStatus === 'Cancelled') {
-                    // Walk-in cancellation = voided sale. No money moves — this business
-                    // does not refund a cancelled/voided item, it just stops the sale.
                     updateData.paymentStatus = 'Voided';
                     updateData.locked = true;
                 } else if (!online && newStatus === 'Confirmed') {
@@ -426,11 +448,6 @@ include 'templates/header.php';
         };
     });
 
-    // --- Proof of Delivery capture (online orders only) ---
-    // Confirming an online order always requires a photo + recipient name from the
-    // rider. This is the same capture flow that used to live on the Delivery Status
-    // page — it now lives wherever status is actually changed, since Delivery Status
-    // is monitoring-only.
     let podTargetOrderId = null;
     let podCompressedDataUrl = null;
 
@@ -446,8 +463,6 @@ include 'templates/header.php';
     }
 
     function cancelPodCapture() {
-        // Nothing was written — put the visible dropdown back to the real saved status
-        // so it doesn't visually claim "Confirmed" while Firestore still says otherwise.
         if (vrOrderData) populateStatusSelect(vrOrderData);
         document.getElementById('podCaptureOverlay').classList.remove('open');
         podTargetOrderId = null;
@@ -460,9 +475,6 @@ include 'templates/header.php';
         el.style.display = 'block';
     }
 
-    // Firestore caps a document at 1 MiB and this photo shares that document with the
-    // rest of the order's fields, so a full-resolution phone photo needs to be
-    // downscaled/re-encoded client-side before it can be saved.
     function compressImageFile(file, maxDimension, quality) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -523,9 +535,6 @@ include 'templates/header.php';
         btn.disabled = true;
         btn.innerText = 'Saving...';
         try {
-            // One write: status flips to Confirmed, payment settles, the order locks,
-            // and the proof lands together — there is never a moment where the order
-            // reads Confirmed without POD attached, or vice versa.
             await db.collection('orders').doc(podTargetOrderId).update({
                 status: 'Confirmed',
                 paymentStatus: 'Paid',
@@ -546,8 +555,6 @@ include 'templates/header.php';
             btn.innerText = 'Confirm Delivery';
         }
     }
-
-    // --- Void workflow (no refunds — voiding never returns money) ---
 
     function setVrScope(s) {
         vrScope = s;
@@ -570,18 +577,10 @@ include 'templates/header.php';
         `).join('') || '<p style="color:#ccc;font-size:0.85rem;">No items on this order.</p>';
     }
 
-    // Set by openVoidModal(), read by submitVoid() — tracks
-    // whether THIS void attempt is itself part of a frequency spike
-    // for the currently logged-in staff account.
     let vrAnomalySeverity = null;
     let vrAnomalyDetail = null;
 
     async function openVoidModal() {
-        // Business rule: only managers (admin/super-admin) may void an
-        // order — cashiers/employees never have this power. The button
-        // itself is already hidden from employees in the PHP above; this
-        // check is a second layer in case someone calls this function
-        // directly (e.g. from the browser console).
         if (!['admin', 'super-admin'].includes(window.currentUserRole)) {
             alert('Only managers can void orders. Please ask a manager to assist.');
             return;
@@ -597,11 +596,6 @@ include 'templates/header.php';
         document.getElementById('vrApproverEmail').value = '';
         document.getElementById('vrApproverPin').value = '';
 
-        // --- Sales Anomalies Detection: void/cancellation frequency check ---
-        // Counts how many voids THIS manager account has already
-        // initiated in the rolling window (see SalesAnomalies.checkVoidFrequency).
-        // This runs every time the modal opens, before anything is submitted,
-        // so the risk is visible up front rather than after the fact.
         vrAnomalySeverity = null;
         vrAnomalyDetail = null;
         const banner = document.getElementById('vrAnomalyBanner');
@@ -620,11 +614,6 @@ include 'templates/header.php';
             console.warn('Void frequency check failed, continuing without it.', e);
         }
 
-        // A manager can normally approve their own void. The only
-        // exception: if THIS manager's own recent void activity just
-        // tripped the Critical frequency threshold, a second manager's
-        // credentials are required — one manager alone can't wave through
-        // their own suspicious pattern.
         const pinSection = document.getElementById('vrPinSection');
         if (vrAnomalySeverity === 'critical') {
             pinSection.classList.add('show');
@@ -650,12 +639,6 @@ include 'templates/header.php';
         document.getElementById('vrError').style.display = 'none';
 
         try {
-            // Step 1 — approval gate. Only managers (admin/super-admin) ever
-            // reach this point (enforced in openVoidModal()). Normally a
-            // manager approves their own void with no extra step. The one
-            // exception: if this manager's own recent void activity just
-            // tripped the Critical frequency threshold, a SECOND manager's
-            // email + password must be entered to proceed.
             let approvedBy = null;
             const pinRequired = vrAnomalySeverity === 'critical';
             if (pinRequired) {
@@ -672,13 +655,12 @@ include 'templates/header.php';
                 }
                 approvedBy = verifiedManager;
             } else {
-                approvedBy = window.currentUserEmail || window.currentUserRole; // manager approving their own action
+                approvedBy = window.currentUserEmail || window.currentUserRole;
             }
 
             btn.disabled = true;
             btn.innerText = 'Processing...';
 
-            // Step 2 — collect what's being voided
             const reasonCode = document.getElementById('vrReason').value;
             const restockAction = document.getElementById('vrRestockAction').value;
             let voidItems = [];
@@ -699,7 +681,6 @@ include 'templates/header.php';
                 }
             }
 
-            // Step 3 — the original invoice is never edited. A new document records what happened.
             const voidId = await window.generateVoidId();
             await db.collection('voidRecords').add({
                 voidId: voidId,
@@ -716,11 +697,8 @@ include 'templates/header.php';
                 timestamp: firebase.firestore.FieldValue.serverTimestamp()
             });
 
-            // Step 4 — one narrow, permitted status flip on the original order. Content
-            // untouched. No 'Refunded' state exists — voiding never returns money.
             await db.collection('orders').doc(orderId).update({ paymentStatus: 'Voided', status: 'Cancelled' });
 
-            // Step 5 — restock/write-off, run as the same transaction pattern used at sale time
             const itemsToProcess = vrScope === 'partial' ? voidItems : (vrOrderData.items || []);
             if (restockAction === 'restock') {
                 for (const item of itemsToProcess) {
@@ -736,7 +714,6 @@ include 'templates/header.php';
                 }
             }
 
-            // Step 6 — negative ledger entry so daily sales totals stay accurate without touching the receipt
             const voidValue = itemsToProcess.reduce((sum, it) => sum + (parseFloat(it.price || 0) * parseInt(it.qty || 0)), 0);
             await db.collection('salesLedger').add({
                 voidId: voidId,
@@ -756,9 +733,6 @@ include 'templates/header.php';
                 read: false
             });
 
-            // Step 7 — if this void tripped the frequency check, record it on the
-            // Sales Anomalies dashboard. overriddenBy is only set when the PIN
-            // gate was actually shown (employee, or a Critical spike).
             if (vrAnomalySeverity) {
                 await SalesAnomalies.logAnomaly({
                     type: 'void_spike',

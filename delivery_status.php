@@ -1,13 +1,6 @@
 <?php 
 /**
  * BLOOMINOUS - Delivery Status Monitoring (Firebase Spoke)
- *
- * Read-only. This page never writes to `orders` — it only displays each online
- * order's current delivery status and lets staff view the rider's uploaded Proof
- * of Delivery photo. Status changes (Pending -> Processing -> In Transit ->
- * Confirmed) happen from Order Management, which is the single place that owns
- * order status for both online and walk-in orders. Keeping the write path in one
- * place is what removed the duplicate status dropdown that used to live here too.
  */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -43,27 +36,36 @@ include 'templates/header.php';
     .order-date { color: #7d8da1; }
 
     .no-pod { color: #ccc; font-size: 0.78rem; font-weight: 700; font-style: italic; }
-    .pod-thumb-btn { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; cursor: pointer; border: 1px solid var(--border-color); transition: 0.2s; }
-    .pod-thumb-btn:hover { transform: scale(1.08); border-color: var(--primary); }
+    .pod-thumb-btn { 
+        width: 50px; height: 50px; border-radius: 12px; object-fit: cover; cursor: pointer; 
+        border: 2px solid transparent; transition: 0.3s; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    .pod-thumb-btn:hover { transform: scale(1.1); border-color: var(--primary); }
 
-    #podViewOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.75); z-index: 600; align-items: center; justify-content: center; padding: 20px; }
+    #podViewOverlay { 
+        display: none; position: fixed; inset: 0; background: rgba(15,15,15,0.85); 
+        backdrop-filter: blur(5px); z-index: 600; align-items: center; justify-content: center; padding: 20px; 
+    }
     #podViewOverlay.open { display: flex; }
-    #podViewCard { background: var(--surface); border-radius: 24px; padding: 1.5rem; max-width: 420px; width: 100%; text-align: center; }
-    #podViewCard img { width: 100%; border-radius: 16px; margin-bottom: 1rem; }
-    #podViewMeta { font-size: 0.8rem; color: var(--text-light); font-weight: 600; margin-bottom: 1rem; }
-    #podViewCard button { width: 100%; padding: 12px; border-radius: 14px; border: none; background: #f5f5f5; color: var(--text-light); font-weight: 800; cursor: pointer; }
+    #podViewCard { 
+        background: var(--surface); border-radius: 24px; padding: 1.5rem; max-width: 500px; width: 100%; 
+        text-align: center; box-shadow: 0 30px 60px rgba(0,0,0,0.3); 
+    }
+    #podViewCard img { width: 100%; max-height: 60vh; object-fit: contain; border-radius: 16px; margin-bottom: 1rem; background: #000; }
+    #podViewMeta { font-size: 0.85rem; color: var(--text-light); font-weight: 600; margin-bottom: 1rem; line-height: 1.5; }
+    #podViewCard button { 
+        width: 100%; padding: 14px; border-radius: 14px; border: none; background: var(--primary); 
+        color: white; font-weight: 800; cursor: pointer; transition: 0.2s;
+    }
+    #podViewCard button:hover { background: #d81b60; }
 
-    /* ============ DARK MODE ============
-       Only active when header.php sets data-theme="dark" on <html>. */
+    /* ============ DARK MODE ============ */
     html[data-theme="dark"] .delivery-content td { border-bottom-color: var(--border-color); }
     html[data-theme="dark"] .table-card { box-shadow: none; }
     html[data-theme="dark"] .badge-pending { background: rgba(255, 187, 85, 0.15); color: #fcd34d; }
     html[data-theme="dark"] .badge-confirmed { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
-    html[data-theme="dark"] .order-date,
-    html[data-theme="dark"] .no-pod { color: var(--text-light); }
-    html[data-theme="dark"] #podViewCard button { background: var(--surface-alt); }
-
-    /* Tailwind / utility class remap, scoped to this page */
+    html[data-theme="dark"] .order-date, html[data-theme="dark"] .no-pod { color: var(--text-light); }
+    html[data-theme="dark"] #podViewCard { border: 1px solid var(--border-color); }
     html[data-theme="dark"] .delivery-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
     html[data-theme="dark"] .delivery-content :is(.text-gray-500, .text-gray-400, .text-gray-300, .text-muted) { color: var(--text-light); }
     html[data-theme="dark"] .delivery-content .bg-white { background-color: var(--surface); }
@@ -107,7 +109,9 @@ include 'templates/header.php';
     <div id="podViewCard">
         <img id="podViewImg" src="" alt="Delivery proof">
         <div id="podViewMeta"></div>
-        <button type="button" onclick="closePodViewer()">Close</button>
+        <button type="button" onclick="closePodViewer()">
+            <i class="fa-solid fa-xmark mr-2"></i> Close
+        </button>
     </div>
 </div>
 
@@ -115,8 +119,6 @@ include 'templates/header.php';
     document.addEventListener('DOMContentLoaded', () => {
         const deliveryData = document.getElementById('deliveryData');
 
-        // Walk-in orders are handed over in person and have no delivery leg, so this
-        // monitor only ever shows online (type 'WEB') orders.
         db.collection('orders').where('branchId', '==', window.currentBranch).onSnapshot(snap => {
             const onlineDocs = snap.docs.filter(doc => (doc.data().type || 'WEB') !== 'POS');
 
@@ -137,9 +139,6 @@ include 'templates/header.php';
                 const id = doc.id;
                 const status = (o.status || 'pending').toLowerCase();
 
-                // Displayed status mirrors exactly what Order Management can set:
-                // pending, processing, in transit, confirmed. Anything else (older
-                // records) falls back to the closest current meaning.
                 let displayStatus;
                 if (status === 'confirmed' || status === 'delivered' || status === 'completed') displayStatus = 'Confirmed';
                 else if (status === 'in transit') displayStatus = 'In Transit';
@@ -153,11 +152,21 @@ include 'templates/header.php';
                 if (displayStatus === 'In Transit' || displayStatus === 'Processing') badgeClass = 'badge-transit';
                 if (displayStatus === 'Confirmed') badgeClass = 'badge-confirmed';
 
-                let podCell;
-                if (o.podPhotoUrl) {
-                    podCell = `<img src="${o.podPhotoUrl}" class="pod-thumb-btn" onclick="viewPodPhoto('${o.podPhotoUrl.replace(/'/g, "\\'")}', '${(o.courierName || '').replace(/'/g, "\\'")}', '${(o.podRecipient || '').replace(/'/g, "\\'")}')" title="View delivery photo">`;
-                } else {
-                    podCell = `<span class="no-pod">Not yet uploaded</span>`;
+                // CHANGED: Check for both podPhotoUrl (new) and proofOfDeliveryPhoto (old)
+                const photoUrl = o.podPhotoUrl || o.proofOfDeliveryPhoto;
+                let podCell = `<span class="no-pod">Not yet uploaded</span>`;
+
+                if (photoUrl) {
+                    const safeUrl = photoUrl.replace(/'/g, "\\'");
+                    const safeCourier = (o.courierName || '').replace(/'/g, "\\'");
+                    const safeRecipient = (o.podRecipient || '').replace(/'/g, "\\'");
+                    
+                    podCell = `
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <img src="${photoUrl}" class="pod-thumb-btn" onclick="viewPodPhoto('${safeUrl}', '${safeCourier}', '${safeRecipient}')" title="View Proof of Delivery">
+                            <span style="font-size:0.7rem; font-weight:700; color:#2ecc71;"><i class="fa-solid fa-check-circle"></i> Verified</span>
+                        </div>
+                    `;
                 }
 
                 html += `
@@ -174,13 +183,16 @@ include 'templates/header.php';
         });
     });
 
-    // Clicking the POD thumbnail views the photo — read-only, never writes anything.
     function viewPodPhoto(photoUrl, courier, recipient) {
         document.getElementById('podViewImg').src = photoUrl;
         const metaParts = [];
-        if (courier) metaParts.push('Courier: ' + courier);
-        if (recipient) metaParts.push('Received by: ' + recipient);
-        document.getElementById('podViewMeta').innerText = metaParts.join(' · ') || 'No additional details on file.';
+        if (courier) metaParts.push(`<strong>Courier:</strong> ${courier}`);
+        if (recipient) metaParts.push(`<strong>Received by:</strong> ${recipient}`);
+        
+        document.getElementById('podViewMeta').innerHTML = metaParts.length > 0 
+            ? metaParts.join('<br>') 
+            : 'No additional details on file.';
+            
         document.getElementById('podViewOverlay').classList.add('open');
     }
 

@@ -1,10 +1,6 @@
 <?php
 /**
  * BLOOMINOUS - Staff/Admin Profile
- * Self-service profile page for any signed-in staff, admin, or
- * super-admin account. Mirrors lib/profile_page.dart's layout on
- * mobile: identity card with role badge, Edit Profile, Change
- * Password, and (new on both platforms) a verified Mobile Number.
  */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -19,46 +15,68 @@ if (!$user_id) {
 include 'templates/header.php';
 ?>
 <style>
-    .profile-card { background: white; border: 1px solid #f0f0f0; border-radius: 30px; padding: 2.5rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); }
+    .profile-card { 
+        background: var(--surface); 
+        border: 1px solid var(--border-color); 
+        border-radius: 30px; 
+        padding: 2.5rem; 
+        box-shadow: 0 10px 30px rgba(0,0,0,0.02); 
+        transition: 0.3s;
+    }
+    
     .role-badge {
         display: inline-flex; padding: 6px 16px; border-radius: 20px;
         background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3);
         color: #F59E0B; font-size: 0.65rem; font-weight: 900; letter-spacing: 1px;
     }
+    
     .action-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 1.1rem 1.4rem; border: 1px solid #f0f0f0; border-radius: 18px;
-        margin-bottom: 12px; background: #fff;
+        padding: 1.1rem 1.4rem; border: 1px solid var(--border-color); border-radius: 18px;
+        margin-bottom: 12px; background: var(--surface);
     }
+    
     .action-row-left { display: flex; align-items: center; gap: 14px; }
+    
     .action-icon-circle {
-        width: 40px; height: 40px; border-radius: 12px; background: #fafafa;
+        width: 40px; height: 40px; border-radius: 12px; background: var(--surface-alt);
         display: flex; align-items: center; justify-content: center; color: #F59E0B; font-size: 1rem;
     }
-    .action-title { font-weight: 800; font-size: 0.85rem; color: #333; }
-    .action-subtitle { font-size: 0.72rem; color: #aaa; margin-top: 2px; }
+    
+    .action-title { font-weight: 800; font-size: 0.85rem; color: var(--text-main); }
+    .action-subtitle { font-size: 0.72rem; color: var(--text-light); margin-top: 2px; }
+    
     .btn-outline-gold {
         background: none; border: 1.5px solid #F59E0B; color: #F59E0B;
         padding: 8px 18px; border-radius: 12px; font-weight: 800; font-size: 0.72rem;
-        text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
+        text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: 0.3s;
     }
     .btn-outline-gold:hover { background: rgba(245, 158, 11, 0.08); }
+    
     .field-group { margin-bottom: 16px; text-align: left; }
-    .field-group label { display: block; font-size: 0.65rem; font-weight: 800; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .field-group label { display: block; font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    
     .field-group input, .field-group select {
-        width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #f0f0f0;
-        background: #fafafa; font-weight: 600; font-size: 0.85rem; outline: none; box-sizing: border-box;
+        width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-color);
+        background: var(--surface-alt); color: var(--text-main); font-weight: 600; font-size: 0.85rem; outline: none; box-sizing: border-box;
+        transition: 0.3s;
     }
-    .field-group input:focus, .field-group select:focus { border-color: #F59E0B; background: #fff; }
+    .field-group input:focus, .field-group select:focus { border-color: #F59E0B; background: var(--surface); }
+    
     .otp-box-row { display: flex; gap: 8px; justify-content: center; margin: 16px 0; }
-    .otp-box { width: 42px; height: 50px; border: 2px solid #f0f0f0; border-radius: 12px; text-align: center; font-weight: 900; font-size: 1.1rem; outline: none; }
+    .otp-box { width: 42px; height: 50px; border: 2px solid var(--border-color); border-radius: 12px; text-align: center; font-weight: 900; font-size: 1.1rem; outline: none; background: var(--surface-alt); color: var(--text-main); }
     .otp-box:focus { border-color: #F59E0B; }
-    .save-btn { width: 100%; padding: 13px; background: #F59E0B; color: white; border: none; border-radius: 12px; font-weight: 800; cursor: pointer; margin-top: 6px; }
+    
+    .save-btn { width: 100%; padding: 13px; background: #F59E0B; color: white; border: none; border-radius: 12px; font-weight: 800; cursor: pointer; margin-top: 6px; transition: 0.3s; }
     .save-btn:hover { background: #d97706; }
-    .cancel-btn { width: 100%; padding: 13px; background: #f5f5f5; color: #888; border: none; border-radius: 12px; font-weight: 800; cursor: pointer; margin-top: 8px; }
+    
+    .cancel-btn { width: 100%; padding: 13px; background: var(--surface-alt); color: var(--text-light); border: 1px solid var(--border-color); border-radius: 12px; font-weight: 800; cursor: pointer; margin-top: 8px; transition: 0.3s; }
+    
     .status-verified { color: #16a34a; font-weight: 800; font-size: 0.7rem; display: flex; align-items: center; gap: 6px; }
-    .status-unset { color: #bbb; font-weight: 700; font-size: 0.75rem; }
-    #phoneAlert { display: none; background: #fef2f2; color: #DC2626; padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; margin-top: 10px; line-height: 1.5; }
+    .status-unset { color: var(--text-light); font-weight: 700; font-size: 0.75rem; }
+    
+    #phoneAlert { display: none; background: rgba(220, 38, 38, 0.1); color: #DC2626; padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; margin-top: 10px; line-height: 1.5; border: 1px solid rgba(220, 38, 38, 0.2); }
+    
     .test-mode-badge {
         display: inline-flex; align-items: center; gap: 6px;
         background: rgba(123, 121, 242, 0.1); color: #7B79F2;
@@ -69,7 +87,7 @@ include 'templates/header.php';
 
 <main style="padding: 1.5rem; max-width: 720px; margin: 0 auto;">
     <div class="mb-10">
-        <h1 class="brand-font text-5xl font-black text-gray-800">My Profile</h1>
+        <h1 class="brand-font text-5xl font-black text-gray-800" style="color: var(--text-main);">My Profile</h1>
         <p class="text-gray-400 text-sm font-medium mt-1">Your account details, security, and contact information.</p>
     </div>
 
@@ -83,17 +101,7 @@ include 'templates/header.php';
 
 <script>
     // FIXED: templates/header.php already ran firebase.initializeApp()
-    // and exposed window.db / window.auth globally — every other admin
-    // page (fraud_analytics.php, sales_anomalies.php) reads those same
-    // globals directly and never re-initializes. This file previously
-    // called firebase.initializeApp() a SECOND time here, which the
-    // Firebase SDK throws on immediately ("Firebase App named '[DEFAULT]'
-    // already exists") — that error killed the rest of this script before
-    // auth.onAuthStateChanged() ever got registered, which is why the
-    // page was stuck on "Loading profile..." forever with no visible
-    // error unless you opened DevTools. No local `db`/`auth` declared
-    // here at all now — `db` and `auth` below are the same bare globals
-    // header.php's own inline scripts already use.
+    // and exposed window.db / window.auth globally. No re-initialization here.
     const root = document.getElementById('profileRoot');
 
     let currentUserData = null;
@@ -147,14 +155,14 @@ include 'templates/header.php';
 
         root.innerHTML = `
             ${data === null ? `
-            <div style="background:#fef2f2; border:1px solid rgba(220,38,38,0.15); border-radius:16px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center; gap:10px;">
+            <div style="background: rgba(220,38,38,0.1); border:1px solid rgba(220,38,38,0.2); border-radius:16px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center; gap:10px;">
                 <i class="fa-solid fa-triangle-exclamation" style="color:#DC2626;"></i>
                 <span style="font-size:0.75rem; color:#DC2626; font-weight:700;">No Firestore profile found for ${user.email}</span>
             </div>` : ''}
 
             <div class="profile-card mb-6" style="text-align:center;">
-                <h2 class="brand-font" style="font-size:1.7rem; font-weight:800; color:#222;">${fullName}</h2>
-                <p style="font-size:0.8rem; color:#999; margin-top:4px;">${user.email}</p>
+                <h2 class="brand-font" style="font-size:1.7rem; font-weight:800; color:var(--text-main);">${fullName}</h2>
+                <p style="font-size:0.8rem; color:var(--text-light); margin-top:4px;">${user.email}</p>
                 <div style="margin-top:12px;"><span class="role-badge">${roleLabel}</span></div>
             </div>
 
@@ -187,10 +195,10 @@ include 'templates/header.php';
                 <div class="field-group"><label>First Name</label><input type="text" id="editFirstName" value="${data?.firstName || ''}"></div>
                 <div class="field-group"><label>Middle Name</label><input type="text" id="editMiddleName" value="${data?.middleName || ''}"></div>
                 <div class="field-group"><label>Last Name</label><input type="text" id="editLastName" value="${data?.lastName || ''}"></div>
-                <div class="field-group"><label>Birthday</label><input type="date" id="editBirthday" value="${data?.birthday || ''}"></div>
+                <div class="field-group"><label>Birthday</label><input type="date" id="editBirthday" value="${data?.birthday || ''}" style="color-scheme: dark;"></div>
                 <div class="field-group">
                     <label>Sex</label>
-                    <select id="editSex">
+                    <select id="editSex" style="color-scheme: dark;">
                         <option value="Male" ${data?.sex !== 'Female' ? 'selected' : ''}>Male</option>
                         <option value="Female" ${data?.sex === 'Female' ? 'selected' : ''}>Female</option>
                     </select>
@@ -319,7 +327,7 @@ include 'templates/header.php';
         const area = document.getElementById('phoneFormArea');
         area.innerHTML = `
             ${isTestNumber ? `<div class="test-mode-badge"><i class="fa-solid fa-flask"></i> Test Mode Number Detected — no real SMS sent, use the fixed test code from Firebase Console.</div>` : ''}
-            <p style="font-size:0.75rem; color:#888; margin-bottom:10px;">Enter the 6-digit code sent to ${phone}</p>
+            <p style="font-size:0.75rem; color:var(--text-light); margin-bottom:10px;">Enter the 6-digit code sent to ${phone}</p>
             <div class="otp-box-row">
                 <input class="otp-box" maxlength="1" inputmode="numeric">
                 <input class="otp-box" maxlength="1" inputmode="numeric">

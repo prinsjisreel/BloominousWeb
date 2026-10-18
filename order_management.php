@@ -30,8 +30,7 @@ include 'templates/header.php';
     .status-select { padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid var(--border-color); background: var(--surface-alt); outline: none; cursor: pointer; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; transition: 0.3s; }
     .status-select:focus { border-color: var(--primary); background: var(--surface); }
 
-    /* Online / Walk-in channel tabs — this is the split the whole page pivots on now:
-       every query, stat, and status-option set below is scoped to whichever tab is active. */
+    /* Online / Walk-in channel tabs */
     .channel-tabs { display: flex; gap: 10px; margin-bottom: 2rem; }
     .channel-tab { padding: 14px 28px; border-radius: 18px; border: 1px solid var(--border-color); background: var(--surface); font-weight: 800; font-size: 0.85rem; cursor: pointer; color: var(--text-light); transition: 0.2s; display: flex; align-items: center; gap: 10px; }
     .channel-tab .count { background: #f5f5f5; color: var(--text-light); padding: 2px 10px; border-radius: 50px; font-size: 0.72rem; }
@@ -58,9 +57,7 @@ include 'templates/header.php';
     .pod-cancel { background: #f5f5f5; color: var(--text-light); }
     .pod-confirm { background: var(--primary); color: #fff; }
 
-    /* Proof of Order viewer (walk-in orders, super-admin only).
-       The photo itself is taken in BloominousApp's camera-only POS screen,
-       with the date/time already burned into the pixels. This page only reads it. */
+    /* Proof of Order viewer */
     .proof-btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 12px; border: 1px solid rgba(233,30,99,0.25); background: rgba(233,30,99,0.06); color: var(--primary); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
     .proof-btn:hover { background: var(--primary); color: #fff; }
     .proof-none { font-size: 0.7rem; font-weight: 700; color: var(--text-light); font-style: italic; white-space: nowrap; }
@@ -80,31 +77,19 @@ include 'templates/header.php';
     #proofClockWarning { display: none; margin-top: 1rem; padding: 12px 14px; border-radius: 14px; background: rgba(245,158,11,0.12); color: #b45309; font-size: 0.78rem; font-weight: 700; }
     .proof-open-link { display: inline-block; margin-top: 1rem; font-size: 0.75rem; font-weight: 800; color: var(--primary); text-decoration: none; }
 
-    /* ============ DARK MODE ============
-       Only active when header.php has set data-theme="dark" on <html>.
-       1) Colors that have no matching theme variable get a dark value.
-       2) The Tailwind "light" classes used in this page's markup -- and
-          in the order rows that JavaScript builds later -- are recolored,
-          scoped to .order-content so the shared sidebar/topbar are untouched.
-       3) color-scheme: dark makes the browser draw native dropdown
-          menus (the <option> lists) dark too. */
+    /* ============ DARK MODE ============ */
     html[data-theme="dark"] #orderTable td { border-bottom-color: var(--border-color); }
     html[data-theme="dark"] .customer-avatar { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.2); }
-    html[data-theme="dark"] .channel-tab .count,
-    html[data-theme="dark"] .pod-cancel { background: var(--surface-alt); }
+    html[data-theme="dark"] .channel-tab .count, html[data-theme="dark"] .pod-cancel { background: var(--surface-alt); }
     html[data-theme="dark"] .pod-field label { color: var(--text-light); }
-    html[data-theme="dark"] .stat-card,
-    html[data-theme="dark"] .list-card { box-shadow: none; }
+    html[data-theme="dark"] .stat-card, html[data-theme="dark"] .list-card { box-shadow: none; }
     html[data-theme="dark"] .status-select { color-scheme: dark; }
     html[data-theme="dark"] #proofViewerModal { box-shadow: none; border: 1px solid var(--border-color); }
     html[data-theme="dark"] #proofClockWarning { color: #fbbf24; }
-
     html[data-theme="dark"] .order-content .text-gray-800 { color: var(--text-main); }
-    html[data-theme="dark"] .order-content .text-gray-400,
-    html[data-theme="dark"] .order-content .text-gray-300 { color: var(--text-light); }
+    html[data-theme="dark"] .order-content .text-gray-400, html[data-theme="dark"] .order-content .text-gray-300 { color: var(--text-light); }
     html[data-theme="dark"] .order-content .bg-white { background-color: var(--surface); }
-    html[data-theme="dark"] .order-content .border-gray-100,
-    html[data-theme="dark"] .order-content .border-gray-50 { border-color: var(--border-color); }
+    html[data-theme="dark"] .order-content .border-gray-100, html[data-theme="dark"] .order-content .border-gray-50 { border-color: var(--border-color); }
     html[data-theme="dark"] .order-content .bg-gray-50\/30 { background-color: var(--surface-alt); }
 </style>
 
@@ -168,7 +153,6 @@ include 'templates/header.php';
                         <th>Valuation</th>
                         <th>Timeline</th>
                         <th>Status Selection</th>
-                        <!-- Hidden unless: Walk-in tab is active AND viewer is super-admin -->
                         <th id="proofHeader" style="display:none;">Proof of Order</th>
                     </tr>
                 </thead>
@@ -214,7 +198,7 @@ include 'templates/header.php';
     </div>
 </div>
 
-<!-- Proof of Order viewer: read-only, walk-in orders, super-admin only -->
+<!-- Proof of Order viewer -->
 <div id="proofViewerOverlay" onclick="if (event.target === this) closeProofViewer()">
     <div id="proofViewerModal">
         <div class="proof-head">
@@ -246,22 +230,11 @@ include 'templates/header.php';
 </div>
 
 <script>
-    // Online (type 'WEB', or missing type — legacy web orders) vs Walk-in (type 'POS').
-    // This single flag decides which status options a row gets and which stat card
-    // numbers get computed, so it is checked in exactly one place.
-    // Compared in UPPERCASE because the two platforms spell it differently:
-    // the web POS terminal writes 'POS', BloominousApp's POS scanner writes 'pos'.
-    // Without toUpperCase(), every app walk-in sale (the ones that carry a
-    // proof photo) would wrongly land in the Online tab.
     function isOnlineOrder(o) { return String(o.type || 'WEB').toUpperCase() !== 'POS'; }
 
-    // Who may see walk-in proof photos. Add 'admin' here to widen access.
     const PROOF_VIEWER_ROLES = ['super-admin'];
     const canViewProof = PROOF_VIEWER_ROLES.includes(window.currentUserRole);
 
-    // Filled on every render: order id -> its proof fields. The button only
-    // carries the order id; the photo URL is looked up here instead of being
-    // pasted into the HTML, so odd characters in a URL can never break the page.
     const proofByOrderId = {};
 
     const ORDER_STATUS_OPTIONS = {
@@ -270,12 +243,11 @@ include 'templates/header.php';
     };
     const STATUS_LABELS = { 'pending': 'Pending', 'processing': 'Processing', 'in transit': 'In Transit', 'confirmed': 'Confirmed', 'cancelled': 'Cancelled' };
 
-    let activeChannel = 'online'; // 'online' | 'walkin'
+    let activeChannel = 'online'; 
     let allOrders = [];
     const userMap = {};
 
     document.addEventListener('DOMContentLoaded', async () => {
-        // Pre-fetch name mappings
         const usersSnap = await db.collection('users').get();
         usersSnap.forEach(d => userMap[d.id] = d.data().username || d.data().firstName || '');
         const custSnap = await db.collection('customers').get();
@@ -314,8 +286,10 @@ include 'templates/header.php';
 
         const docs = activeChannel === 'online' ? onlineOrders : walkinOrders;
 
-        // The Proof column exists only on the Walk-in tab, and only for super-admins.
-        const showProof = canViewProof && activeChannel === 'walkin';
+        // Allow both Super Admins AND Admins to view the proof photo.
+        // If you only want Super Admins, change this to `window.currentUserRole === 'super-admin'`.
+        const showProof = (window.currentUserRole === 'super-admin' || window.currentUserRole === 'admin') && activeChannel === 'walkin';
+        
         document.getElementById('proofHeader').style.display = showProof ? '' : 'none';
         const colCount = showProof ? 6 : 5;
         for (const key in proofByOrderId) delete proofByOrderId[key];
@@ -335,20 +309,16 @@ include 'templates/header.php';
             const online = isOnlineOrder(data);
             const rawStatus = (data.status || 'pending').toLowerCase();
             const allowedOptions = online ? ORDER_STATUS_OPTIONS.online : ORDER_STATUS_OPTIONS.walkin;
-            // Fold legacy values (e.g. old 'delivered'/'completed' docs) onto the closest current option
-            // so the dropdown never silently shows the wrong thing for older records.
             let status = allowedOptions.includes(rawStatus) ? rawStatus
                 : (rawStatus === 'delivered' || rawStatus === 'completed') ? 'confirmed'
                 : 'pending';
 
-            // totalAmount = BloominousApp's field name; the other two are the web's.
             const amount = parseFloat(data.total_price || data.total_amount || data.totalAmount || 0);
             if (status === 'pending') pendingCount++;
             if (status === 'confirmed') salesTotal += amount;
 
             const dateObj = data.createdAt || data.timestamp;
             const date = dateObj ? dateObj.toDate().toLocaleDateString() : 'N/A';
-            // The web saves item counts as 'qty', the app as 'quantity'.
             const itemsSummary = (data.items || []).map(i => `${i.name} (${i.qty ?? i.quantity ?? 1})`).join(', ');
             const uid = data.user_id || '';
             const customerName = data.customer_name || userMap[uid] || 'Walk-in Customer';
@@ -358,7 +328,6 @@ include 'templates/header.php';
                 `<option value="${opt}" ${status === opt ? 'selected' : ''}>${STATUS_LABELS[opt]}</option>`
             ).join('');
 
-            // Proof cell: a button if the order has a usable photo, otherwise a note.
             let proofCell = '';
             if (showProof) {
                 if (isSafeProofUrl(data.proofPhotoUrl)) {
@@ -402,23 +371,27 @@ include 'templates/header.php';
         document.getElementById('totalSales').innerText = '₱' + salesTotal.toLocaleString(undefined, {minimumFractionDigits: 2});
     }
 
-    // --- Proof of Order viewer (walk-in orders, super-admin only) ---
-
-    // Only accept HTTPS links that point at Firebase Storage. Anything else
-    // (empty, typo'd, or a hostile value) is treated as "No photo".
+    // --- CHANGED: Now accepts Cloudinary URLs too! ---
     function isSafeProofUrl(url) {
         if (typeof url !== 'string' || url === '') return false;
         try {
             const u = new URL(url);
-            return u.protocol === 'https:' &&
-                (u.hostname === 'firebasestorage.googleapis.com' || u.hostname.endsWith('.firebasestorage.app'));
+            if (u.protocol !== 'https:') return false;
+            
+            // Accept Firebase Storage links
+            if (u.hostname === 'firebasestorage.googleapis.com' || u.hostname.endsWith('.firebasestorage.app')) {
+                return true;
+            }
+            // Accept Cloudinary links
+            if (u.hostname === 'res.cloudinary.com') {
+                return true;
+            }
+            return false;
         } catch (e) {
             return false;
         }
     }
 
-    // Firestore Timestamp -> JS Date. Returns null while a server timestamp
-    // is still pending (it arrives a moment later in the next snapshot).
     function toDateOrNull(ts) {
         return (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
     }
@@ -428,7 +401,7 @@ include 'templates/header.php';
     }
 
     function openProofViewer(orderId) {
-        if (!canViewProof) return; // second lock, in case the button is ever rendered by mistake
+        if (!canViewProof) return;
         const proof = proofByOrderId[orderId];
         if (!proof) return;
 
@@ -437,24 +410,25 @@ include 'templates/header.php';
         img.style.display = 'block';
         imgError.style.display = 'none';
         img.onerror = () => { img.style.display = 'none'; imgError.style.display = 'block'; };
-        img.src = proof.url; // set as a property, never through innerHTML
+        img.src = proof.url;
 
-        const captured = toDateOrNull(proof.capturedAt);
-        const uploaded = toDateOrNull(proof.uploadedAt);
+        // CHANGED: Handle Cloudinary (ISO string) vs Firebase (Timestamp object) for dates
+        const capturedRaw = proof.capturedAt;
+        const uploadedRaw = proof.uploadedAt;
+        
+        const captured = (capturedRaw && typeof capturedRaw.toDate === 'function') ? capturedRaw.toDate() : new Date(capturedRaw);
+        const uploaded = (uploadedRaw && typeof uploadedRaw.toDate === 'function') ? uploadedRaw.toDate() : new Date(uploadedRaw);
 
         document.getElementById('proofViewerOrderId').innerText = 'Order ' + proof.label;
-        document.getElementById('proofCapturedAt').innerText = formatProofDate(captured);
-        document.getElementById('proofUploadedAt').innerText = uploaded ? formatProofDate(uploaded) : 'Pending...';
+        document.getElementById('proofCapturedAt').innerText = formatProofDate(isNaN(captured) ? null : captured);
+        document.getElementById('proofUploadedAt').innerText = formatProofDate(isNaN(uploaded) ? null : uploaded);
         document.getElementById('proofCapturedBy').innerText = proof.capturedBy;
         document.getElementById('proofTotal').innerText = '₱' + proof.amount.toLocaleString(undefined, { minimumFractionDigits: 2 });
         document.getElementById('proofOpenLink').href = proof.url;
 
-        // The stamp on the photo comes from the phone's clock, which a cashier
-        // could change. The server clock can't be changed, so a big gap between
-        // the two is worth a second look.
         const warning = document.getElementById('proofClockWarning');
         const CLOCK_GAP_LIMIT_MIN = 10;
-        if (captured && uploaded) {
+        if (!isNaN(captured) && !isNaN(uploaded)) {
             const gapMin = Math.abs(uploaded - captured) / 60000;
             if (gapMin > CLOCK_GAP_LIMIT_MIN) {
                 warning.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ';
@@ -475,40 +449,27 @@ include 'templates/header.php';
         document.getElementById('proofViewerImg').src = '';
     }
 
-    // Esc closes the viewer, like most photo lightboxes.
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeProofViewer();
     });
 
-    // Routes a dropdown change to the right handler for the row's channel.
     async function handleStatusChange(orderId, onlineStr, newStatus, selectEl) {
         const online = onlineStr === 'true';
-
-        // Online "confirmed" is never a plain write — it must go through the rider's
-        // proof-of-delivery capture first. The dropdown reverts until that's done, and
-        // the status only flips to Confirmed automatically once the proof is submitted.
         if (online && newStatus === 'confirmed') {
             openPodCapture(orderId, selectEl);
             return;
         }
-
         await secureStatusTransition(orderId, newStatus, selectEl);
     }
 
     async function secureStatusTransition(orderId, newStatus, selectEl) {
         try {
-            // Finalized invoices can't be edited directly — only the Void module may touch them
             if (await window.blockIfLocked(orderId)) {
                 selectEl.value = selectEl.dataset.prevStatus;
                 return;
             }
-
             const updateData = { status: newStatus, updated_at: firebase.firestore.FieldValue.serverTimestamp() };
             if (newStatus === 'cancelled') {
-                // Walk-in cancellation = a voided sale. No money moves — this business
-                // does not refund a cancelled/voided item, it just stops the sale.
-                // (Online customers cancel their own orders from their account, so
-                // 'cancelled' never appears as an option on an online row at all.)
                 updateData.paymentStatus = 'Voided';
                 updateData.locked = true;
             }
@@ -520,10 +481,6 @@ include 'templates/header.php';
         }
     }
 
-    // --- Proof of Delivery capture (online orders only) ---
-    // This is the one and only place an online order becomes "Confirmed." It used to
-    // live on the Delivery Status page as a status dropdown option; that page is now
-    // monitoring-only, so the actual write happens here, next to every other status change.
     let podTargetOrderId = null;
     let podTargetSelectEl = null;
     let podCompressedDataUrl = null;
@@ -532,13 +489,11 @@ include 'templates/header.php';
         podTargetOrderId = orderId;
         podTargetSelectEl = selectEl;
         podCompressedDataUrl = null;
-
         document.getElementById('podCaptureError').style.display = 'none';
         document.getElementById('podFileInput').value = '';
         document.getElementById('podPreviewWrap').style.display = 'none';
         document.getElementById('podRecipientInput').value = '';
         document.getElementById('podCourierInput').value = window.currentUserName || '';
-
         document.getElementById('podCaptureOverlay').classList.add('open');
     }
 
@@ -556,9 +511,6 @@ include 'templates/header.php';
         el.style.display = 'block';
     }
 
-    // Firestore caps a document at 1 MiB and this photo shares that document with the
-    // rest of the order's fields, so a full-resolution phone photo needs to be
-    // downscaled/re-encoded client-side before it can be saved.
     function compressImageFile(file, maxDimension, quality) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -609,7 +561,6 @@ include 'templates/header.php';
     async function confirmPodCapture() {
         const btn = document.getElementById('podConfirmBtn');
         document.getElementById('podCaptureError').style.display = 'none';
-
         const recipient = document.getElementById('podRecipientInput').value.trim();
         const courier = document.getElementById('podCourierInput').value.trim();
 
@@ -619,9 +570,6 @@ include 'templates/header.php';
         btn.disabled = true;
         btn.innerText = 'Saving...';
         try {
-            // One write: status flips to Confirmed, payment settles, the order locks,
-            // and the proof lands together — there is never a moment where the order
-            // reads Confirmed without POD attached, or vice versa.
             await db.collection('orders').doc(podTargetOrderId).update({
                 status: 'confirmed',
                 paymentStatus: 'Paid',

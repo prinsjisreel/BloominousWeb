@@ -22,12 +22,7 @@ include 'templates/header.php';
 ?>
 
 <style>
-    /* ============ PAGE TOKENS ============
-       The reservation cards are built by JavaScript with inline
-       style="..." strings. Every hardcoded color in those strings that
-       has no exact match in header.php's theme variables is named here
-       instead. Light values are EXACTLY what the page used before, so
-       light mode is unchanged; dark mode swaps them below. */
+    /* ============ PAGE TOKENS ============ */
     :root {
         --res-soft-border: #f8f8f8;
         --res-divider: #fbfbfb;
@@ -42,6 +37,7 @@ include 'templates/header.php';
         --res-success-bg: #f8fff9;
         --res-danger-bg: #fff8f8;
     }
+    
     html[data-theme="dark"] {
         --res-soft-border: var(--border-color);
         --res-divider: var(--border-color);
@@ -57,15 +53,12 @@ include 'templates/header.php';
         --res-danger-bg: rgba(220, 53, 69, 0.12);
     }
 
-    /* ============ DARK MODE: Tailwind class remap ============
-       Scoped to this page's content and its settings modal only, so the
-       shared sidebar/topbar are untouched. :is() lists both areas once. */
+    /* ============ DARK MODE REMAP ============ */
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.text-gray-500, .text-gray-400, .text-gray-300) { color: var(--text-light); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) .bg-white { background-color: var(--surface); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.bg-gray-50, .bg-gray-100) { background-color: var(--surface-alt); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
-    /* Native controls (dropdown menus, the date picker's calendar icon) */
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(input, select) { color-scheme: dark; }
 </style>
 
@@ -135,8 +128,6 @@ include 'templates/header.php';
         DECLINED: 'Declined'
     };
 
-    // Words older versions of THIS web page used to write. Displayed as
-    // the app's words; no data is changed.
     const LEGACY_STATUS_MAP = {
         'Approved': RES_STATUS.RESERVED,
         'Completed': RES_STATUS.FULFILLED
@@ -154,21 +145,18 @@ include 'templates/header.php';
     };
 
     const STATUS_META = {
-        [RES_STATUS.PENDING]:   { badge: 'background:#fff3cd; color:#856404;', action: null },
-        [RES_STATUS.RESERVED]:  { badge: 'background:#e7f0ff; color:#1d4ed8;', action: '<i class="fa-solid fa-seedling mr-2"></i> Begin Sourcing' },
-        [RES_STATUS.SOURCING]:  { badge: 'background:#d1ecf1; color:#0c5460;', action: '<i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Flag as Ready for Pickup' },
-        [RES_STATUS.READY]:     { badge: 'background:#e2e3e5; color:#383d41;', action: '<i class="fa-solid fa-box-open mr-2"></i> Mark as Fulfilled' },
-        [RES_STATUS.FULFILLED]: { badge: 'background:#d4edda; color:#155724;', action: null },
-        [RES_STATUS.DECLINED]:  { badge: 'background:#f8d7da; color:#721c24;', action: null }
+        [RES_STATUS.PENDING]:   { badge: 'background:rgba(245, 158, 11, 0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3);', action: null },
+        [RES_STATUS.RESERVED]:  { badge: 'background:rgba(59, 130, 246, 0.15); color:#3b82f6; border:1px solid rgba(59,130,246,0.3);', action: '<i class="fa-solid fa-seedling mr-2"></i> Begin Sourcing' },
+        [RES_STATUS.SOURCING]:  { badge: 'background:rgba(139, 92, 246, 0.15); color:#8b5cf6; border:1px solid rgba(139,92,246,0.3);', action: '<i class="fa-solid fa-wand-magic-sparkles mr-2"></i> Flag as Ready for Pickup' },
+        [RES_STATUS.READY]:     { badge: 'background:rgba(16, 185, 129, 0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3);', action: '<i class="fa-solid fa-box-open mr-2"></i> Mark as Fulfilled' },
+        [RES_STATUS.FULFILLED]: { badge: 'background:rgba(46, 204, 113, 0.15); color:#2ecc71; border:1px solid rgba(46,204,113,0.3);', action: null },
+        [RES_STATUS.DECLINED]:  { badge: 'background:rgba(220, 53, 69, 0.15); color:#dc3545; border:1px solid rgba(220,53,69,0.3);', action: null }
     };
 
-    // Same identity the app records (the signed-in email).
     function currentStaffIdentity() {
         return window.currentUserEmail || window.currentUserName || 'Admin';
     }
 
-    // Reads fulfillment_date like the app: a Firestore Timestamp OR text.
-    // "YYYY-MM-DD" is treated as a LOCAL calendar date, so it never shifts a day.
     function parseReservationDate(raw) {
         if (!raw) return null;
         if (typeof raw.toDate === 'function') return raw.toDate();
@@ -181,32 +169,24 @@ include 'templates/header.php';
         return null;
     }
 
-    // =====================================================================
-    // WHERE RESERVATIONS LIVE: one top-level collection for every branch.
-    // =====================================================================
     const RESERVATIONS = 'reservations';
 
     function reservationRef(id) {
         return db.collection(RESERVATIONS).doc(id);
     }
 
-    let branchNames = {};          // branchId -> display name (from branch documents)
-    let latestReservations = [];   // [{ id, branchId, data }]
-    let loadError = null;          // set when the reservations listener fails
+    let branchNames = {};
+    let latestReservations = [];
+    let loadError = null;
 
-    // 'main_branch' -> 'Main Branch' when no branch document has a name for it.
     function branchDisplayName(branchId) {
         if (!branchId) return 'Unassigned';
         if (branchNames[branchId]) return branchNames[branchId];
-        return branchId
-            .split('_')
-            .filter(Boolean)
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ');
+        return branchId.split('_').filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }
 
     // ---------------------------------------------------------------------
-    // Payment ledger rendering. MIRRORS _buildPaymentLedgerSection in the app.
+    // Payment ledger rendering
     // ---------------------------------------------------------------------
     function renderPaymentLedger(id, data) {
         const total = Number(data.total_amount || 0);
@@ -230,25 +210,25 @@ include 'templates/header.php';
                 return `
                     <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:0.72rem; color:var(--text-main);">
                         <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:8px;">
-                            <i class="fa-solid fa-receipt mr-1" style="color:var(--res-faint);"></i>
+                            <i class="fa-solid fa-receipt mr-1" style="color:var(--text-light);"></i>
                             ${dateStr} &middot; ${methodLabel}${note ? ` (${note})` : ''}
                         </span>
                         <span style="font-weight:800; flex-shrink:0;">₱${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                     </div>
                 `;
             }).join('')
-            : `<p style="font-size:0.72rem; color:var(--res-faint); font-style:italic; margin:4px 0;">No balance payments recorded yet.</p>`;
+            : `<p style="font-size:0.72rem; color:var(--text-light); font-style:italic; margin:4px 0;">No balance payments recorded yet.</p>`;
 
         const actionHtml = balance > 0 ? `
             <div style="display:flex; gap:6px; margin-bottom:6px;">
-                <input type="number" min="1" id="payAmount_${id}" placeholder="Amount" style="flex:1; padding:8px 10px; border-radius:10px; border:1px solid var(--res-track); background:var(--res-input-bg); color:var(--text-main); font-size:0.75rem; box-sizing:border-box;">
-                <select id="payMethod_${id}" style="width:90px; padding:8px 6px; border-radius:10px; border:1px solid var(--res-track); background:var(--res-input-bg); color:var(--text-main); font-size:0.7rem;">
+                <input type="number" min="1" id="payAmount_${id}" placeholder="Amount" style="flex:1; padding:8px 10px; border-radius:10px; border:1px solid var(--border-color); background:var(--surface-alt); color:var(--text-main); font-size:0.75rem; box-sizing:border-box;">
+                <select id="payMethod_${id}" style="width:90px; padding:8px 6px; border-radius:10px; border:1px solid var(--border-color); background:var(--surface-alt); color:var(--text-main); font-size:0.7rem;">
                     <option value="cash">Cash</option>
                     <option value="gcash">GCash</option>
                     <option value="maya">Maya</option>
                 </select>
             </div>
-            <input type="text" id="payNote_${id}" placeholder="Note (optional)" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid var(--res-track); background:var(--res-input-bg); color:var(--text-main); font-size:0.72rem; margin-bottom:6px; box-sizing:border-box;">
+            <input type="text" id="payNote_${id}" placeholder="Note (optional)" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid var(--border-color); background:var(--surface-alt); color:var(--text-main); font-size:0.72rem; margin-bottom:6px; box-sizing:border-box;">
             <button onclick="recordPayment('${id}')" style="width:100%; background:none; border:2px solid var(--secondary); color:var(--secondary); padding:8px; border-radius:10px; font-size:0.68rem; font-weight:800; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">
                 <i class="fa-solid fa-credit-card mr-1"></i> Record Payment
             </button>
@@ -259,7 +239,7 @@ include 'templates/header.php';
         `;
 
         return `
-            <div style="background:var(--surface-alt); padding:14px; border-radius:15px; border:1px solid var(--res-soft-border); margin-bottom:15px;">
+            <div style="background:var(--surface-alt); padding:14px; border-radius:15px; border:1px solid var(--border-color); margin-bottom:15px;">
                 <span style="display:block; font-size:0.6rem; text-transform:uppercase; color:var(--text-light); font-weight:800; letter-spacing:0.5px; margin-bottom:8px;">Payment Ledger</span>
                 <div style="display:flex; gap:10px; margin-bottom:8px;">
                     <div style="flex:1;">
@@ -275,7 +255,7 @@ include 'templates/header.php';
                         <span style="font-size:0.8rem; font-weight:900; color:${balance > 0 ? '#dc3545' : '#27ae60'};">₱${balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                     </div>
                 </div>
-                <div style="height:6px; border-radius:4px; background:var(--res-track); overflow:hidden; margin-bottom:10px;">
+                <div style="height:6px; border-radius:4px; background:var(--border-color); overflow:hidden; margin-bottom:10px;">
                     <div style="height:100%; width:${(progress * 100).toFixed(0)}%; background:${balance <= 0 ? '#27ae60' : 'var(--secondary)'};"></div>
                 </div>
                 ${historyHtml}
@@ -306,19 +286,19 @@ include 'templates/header.php';
         return `
         <div style="background:var(--surface); border:1px solid var(--border-color); padding:2.5rem 2rem; border-radius:30px; position:relative; box-shadow: 0 10px 30px rgba(0,0,0,0.01); display:flex; flex-direction:column; height:100%;">
             
-            <button onclick="cancelBooking('${id}')" title="Terminate Log" style="position:absolute; top:20px; right:20px; color:var(--res-muted); background:none; border:none; cursor:pointer; font-size:0.95rem; transition:0.2s;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='var(--res-muted)'">
+            <button onclick="cancelBooking('${id}')" title="Terminate Log" style="position:absolute; top:20px; right:20px; color:var(--text-light); background:none; border:none; cursor:pointer; font-size:0.95rem; transition:0.2s;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='var(--text-light)'">
                 <i class="fa-solid fa-trash-can"></i>
             </button>
 
             ${data.style_photo_url ? `
-            <div style="margin:-2.5rem -2rem 15px -2rem; height:170px; overflow:hidden; border-radius:30px 30px 0 0; position:relative; background:var(--res-photo-bg);">
+            <div style="margin:-2.5rem -2rem 15px -2rem; height:200px; overflow:hidden; border-radius:30px 30px 0 0; position:relative; background:var(--surface-alt);">
                 <img src="${data.style_photo_url}" alt="Customer visual style reference" style="width:100%; height:100%; object-fit:cover;">
                 ${data.detected_theme ? `
-                <div style="position:absolute; bottom:0; left:0; right:0; padding:24px 20px 10px; background:linear-gradient(transparent, rgba(0,0,0,0.65));">
+                <div style="position:absolute; bottom:0; left:0; right:0; padding:24px 20px 10px; background:linear-gradient(transparent, rgba(0,0,0,0.8));">
                     <span style="color:white; font-size:0.65rem; font-weight:800; text-transform:uppercase; letter-spacing:1px;"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i> ${data.detected_theme}</span>
                 </div>` : ''}
             </div>` : `
-            <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; color:var(--res-placeholder); font-size:0.7rem; font-weight:600; font-style:italic;">
+            <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px; color:var(--text-light); font-size:0.7rem; font-weight:600; font-style:italic;">
                 <i class="fa-regular fa-image"></i> No visual style attached
             </div>`}
 
@@ -327,7 +307,7 @@ include 'templates/header.php';
                     ${status}
                 </span>
                 ${isVisualStylistSubmission ? `
-                <span title="Submitted via AI Visual Stylist in the app" style="font-size:0.6rem; font-weight:800; padding:4px 10px; border-radius:20px; text-transform:uppercase; background:#f3e8ff; color:#7e22ce;">
+                <span title="Submitted via AI Visual Stylist in the app" style="font-size:0.6rem; font-weight:800; padding:4px 10px; border-radius:20px; text-transform:uppercase; background:rgba(139, 92, 246, 0.15); color:#8b5cf6; border:1px solid rgba(139,92,246,0.3);">
                     <i class="fa-solid fa-mobile-screen-button mr-1"></i> App
                 </span>` : ''}
             </div>
@@ -341,17 +321,17 @@ include 'templates/header.php';
 
             ${hasPaymentData ? renderPaymentLedger(id, data) : ''}
 
-            <div style="background:var(--surface-alt); padding:15px; border-radius:15px; font-size:0.8rem; font-weight:600; color:var(--text-main); border:1px solid var(--res-soft-border); margin-bottom:20px; flex-grow:1; min-height:80px;">
+            <div style="background:var(--surface-alt); padding:15px; border-radius:15px; font-size:0.8rem; font-weight:600; color:var(--text-main); border:1px solid var(--border-color); margin-bottom:20px; flex-grow:1; min-height:80px;">
                 <span style="display:block; font-size:0.6rem; text-transform:uppercase; color:var(--text-light); font-weight:800; letter-spacing:0.5px; margin-bottom:4px;">Custom Design Manifest</span>
                 ${data.arrangement_details || 'No notes provided.'}
             </div>
 
             ${(data.recommended_flowers && data.recommended_flowers.length) ? `
             <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:20px;">
-                ${data.recommended_flowers.map(f => `<span style="font-size:0.65rem; font-weight:700; padding:4px 10px; border-radius:20px; background:#fff3cd; color:#856404;">${f}</span>`).join('')}
+                ${data.recommended_flowers.map(f => `<span style="font-size:0.65rem; font-weight:700; padding:4px 10px; border-radius:20px; background:rgba(245, 158, 11, 0.15); color:#b45309;">${f}</span>`).join('')}
             </div>` : ''}
 
-            <div style="border-top:1px solid var(--res-divider); padding-top:15px; margin-bottom:20px;">
+            <div style="border-top:1px solid var(--border-color); padding-top:15px; margin-bottom:20px;">
                 <span style="display:block; font-size:0.55rem; text-transform:uppercase; color:var(--text-light); font-weight:800;">Fulfillment Target</span>
                 <span style="font-size:0.8rem; font-weight:800; color:var(--text-main);">${targetDate}</span>
                 <span style="display:block; font-size:0.65rem; color:var(--text-light); font-style:italic; margin-top:4px;">Branch: ${branchDisplayName(branchId)}</span>
@@ -387,8 +367,6 @@ include 'templates/header.php';
         `;
     }
 
-    // Single place that decides what the grid shows. loadError is checked
-    // FIRST, so a later redraw can never cover a loading error.
     function renderReservations() {
         const grid = document.getElementById('reservationsGrid');
 
@@ -404,9 +382,9 @@ include 'templates/header.php';
 
         if (latestReservations.length === 0) {
             grid.innerHTML = `
-                <div style="grid-column: 1 / -1; text-align: center; padding: 60px; color: var(--res-empty);">
+                <div style="grid-column: 1 / -1; text-align: center; padding: 60px; color: var(--text-light);">
                     <i class="fa-solid fa-calendar-check" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.3; color: var(--primary);"></i>
-                    <p class="font-semibold text-gray-500 text-sm tracking-wider uppercase">No event reservations submitted via the Visual Stylist yet.</p>
+                    <p class="font-semibold text-sm tracking-wider uppercase">No event reservations submitted via the Visual Stylist yet.</p>
                 </div>
             `;
             return;
@@ -416,7 +394,6 @@ include 'templates/header.php';
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        // Branch names, used only for the "Branch: ..." label on each card.
         db.collection('branches').onSnapshot(snap => {
             branchNames = {};
             snap.forEach(doc => {
@@ -427,9 +404,6 @@ include 'templates/header.php';
             console.warn('Could not load branch names (labels fall back to ids):', err);
         });
 
-        // Every reservation, from every branch, in ONE top-level collection.
-        // Sorted here (newest first) instead of with .orderBy(), so a
-        // reservation missing created_at is still shown (at the bottom).
         db.collection(RESERVATIONS).onSnapshot(snap => {
             loadError = null;
             latestReservations = snap.docs
@@ -452,10 +426,9 @@ include 'templates/header.php';
     });
 
     // ---------------------------------------------------------------------
-    // ACTIONS -- all target reservations/{id}.
+    // ACTIONS
     // ---------------------------------------------------------------------
 
-    // Approval gate: Pending Review -> Reserved (the app's word)
     async function reserveBooking(id) {
         if (confirm('Reserve this event booking? It will move into the fulfillment pipeline.')) {
             try {
@@ -472,7 +445,7 @@ include 'templates/header.php';
 
     async function declineBooking(id) {
         const reason = prompt('Reason for declining this booking (optional):', '');
-        if (reason === null) return; // user cancelled the prompt
+        if (reason === null) return; 
         try {
             await reservationRef(id).update({
                 status: RES_STATUS.DECLINED,
@@ -484,8 +457,6 @@ include 'templates/header.php';
         }
     }
 
-    // Advances using the status stored in Firestore right now, so a stale
-    // card can never push an order backwards.
     async function advanceStatus(id) {
         const ref = reservationRef(id);
         try {
@@ -529,7 +500,6 @@ include 'templates/header.php';
         }
     }
 
-    // Records a balance payment inside a TRANSACTION (same as the app).
     async function recordPayment(id) {
         const amountInput = document.getElementById(`payAmount_${id}`);
         const methodSelect = document.getElementById(`payMethod_${id}`);
@@ -555,8 +525,6 @@ include 'templates/header.php';
                 const newBalance = Math.max(total - newPaid, 0);
                 const history = Array.isArray(current.payment_history) ? current.payment_history : [];
 
-                // Timestamp.now(), not serverTimestamp() -- server timestamps
-                // aren't allowed inside array elements.
                 const entry = {
                     amount: amount,
                     method: method,

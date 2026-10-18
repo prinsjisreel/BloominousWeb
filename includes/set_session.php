@@ -315,6 +315,36 @@ if (in_array($role, ['admin', 'super-admin', 'staff', 'employee', 'delivery'], t
     }
 }
 
+// ===========================================================================
+// NEW — session fixation defence-in-depth.
+//
+// WHY: this endpoint is the only place a PHP session gets its login
+// markers written. Between reading the incoming cookie and writing
+// $_SESSION[...], the ID is vulnerable to fixation if an attacker could
+// ever plant a known session ID (e.g., via a shared device, a stale tab
+// restored from bfcache, a misconfigured proxy that mirrors Set-Cookie,
+// or a leaked URL). Calling session_regenerate_id(true) forces PHP to:
+//   - mint a brand new session ID
+//   - DESTROY the old session's server-side record so it can never be
+//     replayed
+//   - issue a fresh Set-Cookie with the new ID (using the exact
+//     lifetime/path/secure/httponly/samesite params configured at the
+//     top of this file — so it's correctly 30-day, HTTPS-only,
+//     HttpOnly, SameSite=Lax, unchanged from login.php)
+//
+// It MUST run BEFORE the $_SESSION[...] assignments below. Regenerating
+// after those writes would hand the caller a fresh cookie pointing at
+// an empty session — the exact opposite of the intent.
+//
+// This is NOT the primary fix for the COD symptom (that lives entirely
+// in templates/checkout.php's stale-token path — see that file's
+// submitOrder() around the "forceRefresh" comment). It IS the correct
+// hardening for this endpoint independently, and closes the "PHP session
+// and Firebase token disagree" class of bug at the source whenever the
+// stale cookie is genuinely from an old login attempt.
+// ===========================================================================
+session_regenerate_id(true);
+
 if (in_array($role, ['admin', 'super-admin', 'staff', 'employee'], true)) {
     $_SESSION['admin_id'] = $uid;
     $_SESSION['admin_name'] = $username;

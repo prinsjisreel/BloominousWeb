@@ -1,10 +1,6 @@
 <?php
 /**
- * BLOOMINOUS - 3D Realism: Step 3 (Download Result)
- *
- * Called once the browser's polling in check_3d_model_status.php
- * reports the job is done. Asks Hyper3D for the actual downloadable
- * file list and pulls out the .glb URL.
+ * BLOOMINOUS - 3D Realism: Step 3 (Download v3 Result)
  */
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
@@ -14,46 +10,23 @@ if (!isset($_SESSION['admin_id'])) {
     exit();
 }
 
-define('HYPER3D_API_KEY', 'PASTE_YOUR_HYPER3D_API_KEY_HERE');
+require_once __DIR__ . '/config.local.php';
+$apiKey = getenv('TRIPO_API_KEY');
 
 $input = json_decode(file_get_contents('php://input'), true);
-$taskUuid = $input['uuid'] ?? null;
+$taskId = $input['taskId'] ?? null;
 
-if (!$taskUuid) {
+if (!$taskId) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Missing uuid.']);
+    echo json_encode(['success' => false, 'message' => 'Missing taskId.']);
     exit();
 }
 
-// Recursively searches the decoded response for anything that looks
-// like a .glb download URL. Hyper3D's exact download-response shape
-// isn't fully pinned down in their public docs across API versions, so
-// -- same defensive spirit as kiri_service.dart's _findGlbUrl() --
-// this walks the whole structure rather than assuming one fixed path.
-function bloom_find_glb_url($node) {
-    if (is_string($node) && str_ends_with(strtolower($node), '.glb')) {
-        return $node;
-    }
-    if (is_array($node)) {
-        foreach ($node as $value) {
-            $found = bloom_find_glb_url($value);
-            if ($found !== null) return $found;
-        }
-    }
-    return null;
-}
-
 try {
-    $ch = curl_init('https://api.hyper3d.com/api/v2/download');
+    $ch = curl_init('https://openapi.tripo3d.ai/v3/tasks/' . $taskId);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . HYPER3D_API_KEY,
-            'Content-Type: application/json',
-            'accept: application/json',
-        ],
-        CURLOPT_POSTFIELDS => json_encode(['task_uuid' => $taskUuid]),
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $apiKey],
         CURLOPT_TIMEOUT => 30,
     ]);
 
@@ -61,18 +34,22 @@ try {
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($responseBody === false || $httpCode !== 200) {
-        throw new Exception('Download lookup failed (HTTP ' . $httpCode . ')');
+    if ($httpCode !== 200) {
+        throw new Exception('Could not retrieve final task data (HTTP ' . $httpCode . ')');
     }
 
     $data = json_decode($responseBody, true);
-    $glbUrl = bloom_find_glb_url($data);
+    
+    // v3 returns the GLB inside data.output.model_url
+    $glbUrl = $data['data']['output']['model_url'] ?? null;
 
     if (!$glbUrl) {
-        throw new Exception('No .glb file found in Hyper3D\'s response.');
+        throw new Exception('No .glb model URL found in the v3 response.');
     }
 
+    // Note: v3 model URLs expire in 5 minutes. The app downloads it immediately.
     echo json_encode(['success' => true, 'url' => $glbUrl]);
+
 } catch (\Throwable $e) {
     http_response_code(502);
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);
