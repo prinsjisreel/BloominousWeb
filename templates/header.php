@@ -472,10 +472,6 @@ if ($user_role === 'delivery') {
             <span>3D Realism Hub</span>
         </a>
 
-        <a href="product_catalog.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'product_catalog.php' ? 'active' : ''; ?>">
-            <i class="fa-solid fa-list"></i>
-            <span>Product Catalog</span>
-        </a>
         <a href="customer.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'customer.php' || basename($_SERVER['PHP_SELF']) == 'customer_profile.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-users"></i>
             <span>Customers</span>
@@ -503,6 +499,10 @@ if ($user_role === 'delivery') {
         <a href="freshness.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'freshness.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
             <span>Freshness Analysis</span>
+        </a>
+        <a href="ai_stock_alerts.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'ai_stock_alerts.php' ? 'active' : ''; ?>">
+            <i class="fa-solid fa-bell"></i>
+            <span>AI Stock Alerts</span>
         </a>
         <a href="promos_discounts.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'promos_discounts.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-tags"></i>

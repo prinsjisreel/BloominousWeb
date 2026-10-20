@@ -351,4 +351,136 @@ class PaymentHelper
 
         return $outcome;
     }
-}   
+
+    // =====================================================================
+    // RESERVATION DEPOSITS (Visual Stylist) — added so a GCash/Maya deposit
+    // paid through PayMongo is written into the reservation's payment ledger.
+    //
+    // Unlike orders, the app creates reservation checkout sessions WITHOUT
+    // metadata, so we find the reservation by the session id the app saved
+    // on the document (reservations/{id}.checkout_session_id).
+    // =====================================================================
+
+    /**
+     * Finds the reservation that owns a PayMongo checkout session.
+     * Returns the reservation document id, or null if none matches.
+     */
+    public static function findReservationIdBySession(string $sessionId): ?string
+    {
+        if ($sessionId === '') {
+            return null;
+        }
+        $matches = bloom_firestore_query_rest('reservations', 'checkout_session_id', $sessionId);
+        return !empty($matches) ? (string) $matches[0]['id'] : null;
+    }
+
+    /**
+     * Shared "record this deposit" routine, used by the webhook AND by
+     * reconcile_reservation_payment.php (same idea as finalizeOrderFromSession).
+     *
+     * Idempotent: the PayMongo payment id is stamped on the ledger entry,
+     * so a second call with the same payment never adds money twice.
+     *
+     * Returns: not_paid | reservation_missing | session_mismatch |
+     *          already_recorded | paid
+     */
+    public static function finalizeReservationFromSession(string $reservationId, array $session): string
+    {
+        $paid = self::extractPaidPayment($session);
+        if ($paid === null) {
+            return 'not_paid';
+        }
+
+        $sessionId = (string) ($session['id'] ?? '');
+
+        $result = bloom_firestore_transaction_rest(function (BloomRestTransaction $tx) use ($reservationId, $sessionId, $paid) {
+            $res = $tx->get('reservations', $reservationId);
+            if ($res === null) {
+                return ['outcome' => 'reservation_missing'];
+            }
+
+            // The session must be the one the app stored on THIS reservation.
+            if ($sessionId === '' || ($res['checkout_session_id'] ?? '') !== $sessionId) {
+                return ['outcome' => 'session_mismatch'];
+            }
+
+            $history = (isset($res['payment_history']) && is_array($res['payment_history']))
+                ? array_values($res['payment_history'])
+                : [];
+
+            // Idempotency: this exact PayMongo payment is already on the ledger.
+            foreach ($history as $entry) {
+                if (is_array($entry) && ($entry['paymongo_payment_id'] ?? '') === $paid['paymentId']) {
+                    return ['outcome' => 'already_recorded'];
+                }
+            }
+
+            $amount = $paid['centavos'] / 100;
+            $channel = strtoupper($paid['channel'] ?: 'e-wallet');
+
+            $confirmed = [
+                'amount'              => $amount,
+                'method'              => $paid['channel'] ?: 'gcash',
+                'status'              => 'confirmed',
+                'note'                => "Deposit paid online via PayMongo ({$channel})",
+                'recorded_by'         => 'PayMongo',
+                'recorded_at'         => bloom_rest_now(),
+                'paymongo_payment_id' => $paid['paymentId'],
+            ];
+
+            // Upgrade the waiting 'pending_checkout' entry in place (so the
+            // ledger shows ONE row for the deposit, not two). If the app
+            // didn't leave one, append a new row instead.
+            $replaced = false;
+            foreach ($history as $i => $entry) {
+                if (is_array($entry) && ($entry['status'] ?? '') === 'pending_checkout') {
+                    $history[$i] = array_merge($entry, $confirmed);
+                    $replaced = true;
+                    break;
+                }
+            }
+            if (!$replaced) {
+                $history[] = $confirmed;
+            }
+
+            $total = (float) ($res['total_amount'] ?? 0);
+            $newPaid = (float) ($res['amount_paid'] ?? 0) + $amount;
+            $newBalance = max($total - $newPaid, 0);
+            $depositRequired = (float) ($res['deposit_required'] ?? 0);
+
+            $tx->update('reservations', $reservationId, [
+                'amount_paid'     => $newPaid,
+                'balance_due'     => $newBalance,
+                // deposit_paid = true once the money covers the required deposit
+                'deposit_paid'    => ($res['deposit_paid'] ?? false) === true
+                                     || ($depositRequired > 0 && $newPaid + 0.005 >= $depositRequired)
+                                     || $newBalance <= 0,
+                'payment_history' => $history,
+                'updated_at'      => bloom_rest_now(),
+            ]);
+
+            return [
+                'outcome'  => 'paid',
+                'branchId' => $res['branchId'] ?? null,
+                'name'     => $res['customer_name'] ?? 'a customer',
+                'amount'   => $amount,
+                'channel'  => $channel,
+            ];
+        });
+
+        // Notification AFTER commit so a retried transaction can't duplicate it.
+        if ($result['outcome'] === 'paid') {
+            bloom_firestore_add_document_rest('notifications', [
+                'title'      => 'Reservation Deposit Received',
+                'message'    => "{$result['name']} paid a deposit of P" . number_format($result['amount'], 2)
+                              . " via {$result['channel']}.",
+                'type'       => 'sale',
+                'branchId'   => $result['branchId'],
+                'created_at' => bloom_rest_now(),
+                'read'       => false,
+            ]);
+        }
+
+        return $result['outcome'];
+    }
+}

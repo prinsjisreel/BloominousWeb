@@ -1,7 +1,13 @@
 <?php
 /**
- * BLOOMINOUS - 3D Realism: Step 2 (Poll Tripo v3 Status)
+ * BLOOMINOUS - 3D Realism: Step 2 (Poll the generator's status)
+ *
+ * Checks a Hyper3D (Pixazo) job. Task ids always start with "px_".
+ * Always answers in the shape the page expects:
+ *   { success, done, failed, statusText, message? }
  */
+header('Content-Type: application/json');
+
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 if (!isset($_SESSION['admin_id'])) {
@@ -10,48 +16,46 @@ if (!isset($_SESSION['admin_id'])) {
     exit();
 }
 
+// Only READ the session; unlock it so polling doesn't block other admin tabs.
+session_write_close();
+
 require_once __DIR__ . '/config.local.php';
-$apiKey = getenv('TRIPO_API_KEY');
+require_once __DIR__ . '/includes/pixazo_hyper3d.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
-$taskId = $input['taskId'] ?? null;
+$taskId = (string) ($input['taskId'] ?? '');
 
-if (!$taskId) {
+if ($taskId === '') {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Missing taskId.']);
     exit();
 }
+if (!preg_match('/^[A-Za-z0-9_-]{1,128}$/', $taskId)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Invalid taskId.']);
+    exit();
+}
+// Tripo is gone: anything that is not a Hyper3D id cannot be checked.
+if (!bloom_px_is_task($taskId)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'This is not a Hyper3D task id (old Tripo task ids are no longer supported).']);
+    exit();
+}
 
 try {
-    $ch = curl_init('https://openapi.tripo3d.ai/v3/tasks/' . $taskId);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $apiKey],
-        CURLOPT_TIMEOUT => 20,
-    ]);
-
-    $responseBody = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($httpCode !== 200) {
-        throw new Exception('Status check failed (HTTP ' . $httpCode . ')');
+    if (!bloom_px_enabled()) {
+        throw new Exception('PIXAZO_API_KEY is missing from config.local.php, so this job cannot be checked.');
     }
 
-    $data = json_decode($responseBody, true);
-    
-    // v3 response format: { code: 0, data: { status: "...", progress: 50, ... } }
-    $status = strtolower($data['data']['status'] ?? 'unknown');
-    $progress = $data['data']['progress'] ?? 0;
-
+    $state = bloom_px_status($taskId);
     echo json_encode([
         'success' => true,
-        'done' => ($status === 'success'),
-        'failed' => in_array($status, ['failed', 'cancelled']),
-        'statusText' => $status,
-        'progress' => $progress
+        'done' => $state['done'],
+        'failed' => $state['failed'],
+        'statusText' => $state['statusText'],
+        'message' => $state['message']
+        // Pixazo gives no percentage, so "progress" is left out on purpose.
     ]);
-
 } catch (\Throwable $e) {
     http_response_code(502);
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);

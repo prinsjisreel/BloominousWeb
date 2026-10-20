@@ -13,23 +13,7 @@ if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])) {
 include 'templates/header.php'; 
 ?>
 
-<!-- Bootstrap CDN for this page specifically since it uses Bootstrap classes -->
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-
 <style>
-    /* ============ BOOTSTRAP + DARK MODE ============
-       Bootstrap's own stylesheet (loaded just above) paints <body> with
-       its --bs-body-bg / --bs-body-color variables -- white and dark gray.
-       Because it loads AFTER header.php, it would override the dark page
-       background. In dark mode, point Bootstrap's variables at our theme
-       instead. html[data-theme="dark"] is more specific than Bootstrap's
-       :root, so these values win. Light mode is untouched. */
-    html[data-theme="dark"] {
-        --bs-body-bg: var(--background);
-        --bs-body-color: var(--text-main);
-        --bs-border-color: var(--border-color);
-    }
-
     .freshness-container { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .stat-card { background: var(--surface); border-radius: 30px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-color); }
     .ai-card-premium { background: linear-gradient(135deg, #FCD34D 0%, #F59E0B 55%, #B45309 100%); color: white; border-radius: 35px; padding: 3rem; position: relative; overflow: hidden; }

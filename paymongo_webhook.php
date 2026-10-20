@@ -10,6 +10,11 @@
  *
  * Response codes matter here: 2xx tells PayMongo "got it, stop sending";
  * 5xx tells PayMongo "try again later" (it retries automatically).
+ *
+ * TWO kinds of payments arrive here:
+ *   1. Shop orders        -> session metadata carries order_id
+ *   2. Reservation deposits (Visual Stylist, created by the mobile app)
+ *                         -> no metadata; matched by checkout_session_id
  */
 
 require_once __DIR__ . '/includes/firestore_rest.php';
@@ -45,16 +50,27 @@ if ($eventType !== 'checkout_session.payment.paid') {
 }
 
 $orderId = (string) ($session['attributes']['metadata']['order_id'] ?? '');
-if (!preg_match('/^[A-Za-z0-9_-]{1,128}$/', $orderId)) {
-    error_log('paymongo_webhook: paid event without a valid order_id in metadata.');
-    bloom_json_response(['received' => true, 'ignored' => 'missing_order_id']);
-}
 
 try {
-    $outcome = PaymentHelper::finalizeOrderFromSession($orderId, $session);
-    bloom_json_response(['received' => true, 'outcome' => $outcome]);
+    if (preg_match('/^[A-Za-z0-9_-]{1,128}$/', $orderId)) {
+        // ---- Case 1: a shop order ----
+        $outcome = PaymentHelper::finalizeOrderFromSession($orderId, $session);
+        bloom_json_response(['received' => true, 'outcome' => $outcome]);
+    }
+
+    // ---- Case 2: no order_id -> maybe a reservation deposit ----
+    $sessionId = (string) ($session['id'] ?? '');
+    $reservationId = PaymentHelper::findReservationIdBySession($sessionId);
+
+    if ($reservationId !== null) {
+        $outcome = PaymentHelper::finalizeReservationFromSession($reservationId, $session);
+        bloom_json_response(['received' => true, 'type' => 'reservation', 'outcome' => $outcome]);
+    }
+
+    error_log('paymongo_webhook: paid event matches no order or reservation (session ' . $sessionId . ').');
+    bloom_json_response(['received' => true, 'ignored' => 'no_matching_record']);
 } catch (\Throwable $e) {
     // 500 on purpose: Firestore hiccup -> let PayMongo retry later.
-    error_log('paymongo_webhook failed for order ' . $orderId . ': ' . $e->getMessage());
+    error_log('paymongo_webhook failed: ' . $e->getMessage());
     bloom_json_response(['received' => false], 500);
 }

@@ -29,6 +29,25 @@ include 'templates/header.php';
     .customer-avatar { width: 45px; height: 45px; background: #fff5f8; color: var(--primary); border: 1px solid rgba(233, 30, 99, 0.1); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; font-family: 'Cormorant Garamond', serif; }
     .status-select { padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid var(--border-color); background: var(--surface-alt); outline: none; cursor: pointer; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; transition: 0.3s; }
     .status-select:focus { border-color: var(--primary); background: var(--surface); }
+    /* "Touch-move" lock: a Confirmed / Cancelled order can't be changed any more */
+    .status-select:disabled { opacity: 0.65; cursor: not-allowed; }
+    .lock-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Reusable confirm / override-code dialog */
+    #bloomDialogOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 600; align-items: center; justify-content: center; padding: 20px; }
+    #bloomDialogOverlay.open { display: flex; }
+    #bloomDialog { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2.2rem; max-width: 440px; width: 100%; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #bloomDialog h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0 0 0.6rem; color: var(--text-main); }
+    #bloomDialogMsg { color: var(--text-light); font-size: 0.85rem; font-weight: 600; line-height: 1.5; white-space: pre-line; }
+    #bloomDialogInputWrap { display: none; margin-top: 1.1rem; }
+    #bloomDialogInput { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 700; font-size: 0.95rem; letter-spacing: 2px; text-transform: uppercase; outline: none; }
+    #bloomDialogInput:focus { border-color: var(--primary); background: var(--surface); }
+    #bloomDialogError { display: none; margin-top: 10px; color: var(--primary); font-size: 0.8rem; font-weight: 700; }
+    #bloomDialog .dlg-actions { display: flex; gap: 12px; margin-top: 1.6rem; }
+    #bloomDialog .dlg-actions button { flex: 1; padding: 15px; border-radius: 18px; font-weight: 800; border: none; cursor: pointer; }
+    #bloomDialog .dlg-cancel { background: #f5f5f5; color: var(--text-light); }
+    #bloomDialog .dlg-ok { background: var(--primary); color: #fff; }
+    #bloomDialog .dlg-ok.safe { background: #16a34a; }
 
     /* Online / Walk-in channel tabs */
     .channel-tabs { display: flex; gap: 10px; margin-bottom: 2rem; }
@@ -80,7 +99,8 @@ include 'templates/header.php';
     /* ============ DARK MODE ============ */
     html[data-theme="dark"] #orderTable td { border-bottom-color: var(--border-color); }
     html[data-theme="dark"] .customer-avatar { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.2); }
-    html[data-theme="dark"] .channel-tab .count, html[data-theme="dark"] .pod-cancel { background: var(--surface-alt); }
+    html[data-theme="dark"] .channel-tab .count, html[data-theme="dark"] .pod-cancel, html[data-theme="dark"] #bloomDialog .dlg-cancel { background: var(--surface-alt); }
+    html[data-theme="dark"] #bloomDialog { box-shadow: none; border: 1px solid var(--border-color); }
     html[data-theme="dark"] .pod-field label { color: var(--text-light); }
     html[data-theme="dark"] .stat-card, html[data-theme="dark"] .list-card { box-shadow: none; }
     html[data-theme="dark"] .status-select { color-scheme: dark; }
@@ -164,6 +184,22 @@ include 'templates/header.php';
     </div>
 </main>
 
+<!-- Reusable confirm / override-code dialog (used for walk-in Confirm + Cancel) -->
+<div id="bloomDialogOverlay">
+    <div id="bloomDialog">
+        <h3 id="bloomDialogTitle"></h3>
+        <p id="bloomDialogMsg"></p>
+        <div id="bloomDialogInputWrap">
+            <input type="text" id="bloomDialogInput" autocomplete="off" maxlength="32">
+        </div>
+        <div id="bloomDialogError"></div>
+        <div class="dlg-actions">
+            <button type="button" class="dlg-cancel" id="bloomDialogCancelBtn" onclick="closeBloomDialog(false)">Keep order</button>
+            <button type="button" class="dlg-ok" id="bloomDialogOkBtn" onclick="closeBloomDialog(true)">Confirm</button>
+        </div>
+    </div>
+</div>
+
 <div id="podCaptureOverlay">
     <div id="podCaptureModal">
         <h3>Confirm Delivery</h3>
@@ -242,6 +278,12 @@ include 'templates/header.php';
         walkin: ['pending', 'processing', 'confirmed', 'cancelled']
     };
     const STATUS_LABELS = { 'pending': 'Pending', 'processing': 'Processing', 'in transit': 'In Transit', 'confirmed': 'Confirmed', 'cancelled': 'Cancelled' };
+
+    // Employees get this many walk-in cancellations per day (shared across the
+    // whole branch, same rule as the mobile app). The next one needs an
+    // admin-generated single-use override code.
+    const DAILY_CANCEL_LIMIT = 3;
+    const isStaffRole = !['admin', 'super-admin'].includes(window.currentUserRole);
 
     let activeChannel = 'online'; 
     let allOrders = [];
@@ -324,6 +366,15 @@ include 'templates/header.php';
             const customerName = data.customer_name || userMap[uid] || 'Walk-in Customer';
             const avatarInitial = customerName.charAt(0).toUpperCase();
 
+            // "Touch move": once an order is Confirmed or Cancelled (or flagged
+            // locked) the dropdown is frozen for everyone. Employees can only
+            // change walk-in orders; online orders stay admin-only.
+            const isFinal = status === 'confirmed' || status === 'cancelled' || data.locked === true;
+            const canEdit = !isFinal && (!isStaffRole || !online);
+            const lockTitle = isFinal
+                ? 'This order is final and can no longer be changed.'
+                : 'Only admins can update online orders.';
+
             const optionsHtml = allowedOptions.map(opt =>
                 `<option value="${opt}" ${status === opt ? 'selected' : ''}>${STATUS_LABELS[opt]}</option>`
             ).join('');
@@ -357,9 +408,10 @@ include 'templates/header.php';
                 <td class="font-black text-pink-600">₱${amount.toLocaleString(undefined, {minimumFractionDigits:2})}</td>
                 <td class="text-gray-400 font-semibold text-xs">${date}</td>
                 <td>
-                    <select class="status-select" data-prev-status="${status}" onchange="handleStatusChange('${data.id}', '${online}', this.value, this)">
+                    <select class="status-select" data-prev-status="${status}" ${canEdit ? '' : 'disabled title="' + lockTitle + '"'} onchange="handleStatusChange('${data.id}', '${online}', this.value, this)">
                         ${optionsHtml}
                     </select>
+                    ${isFinal ? '<div class="lock-note"><i class="fa-solid fa-lock"></i> Final</div>' : ''}
                 </td>
                 ${proofCell}
             </tr>`;
@@ -459,7 +511,198 @@ include 'templates/header.php';
             openPodCapture(orderId, selectEl);
             return;
         }
+        // Walk-in Confirm / Cancel are final, so they get their own guarded flow.
+        if (!online && newStatus === 'confirmed') {
+            await confirmWalkIn(orderId, selectEl);
+            return;
+        }
+        if (!online && newStatus === 'cancelled') {
+            await cancelWalkIn(orderId, selectEl);
+            return;
+        }
         await secureStatusTransition(orderId, newStatus, selectEl);
+    }
+
+    // ---------- Reusable dialog (replaces ugly browser confirm()) ----------
+    let bloomDialogResolve = null;
+
+    function askBloomDialog({ title, message, confirmText = 'Confirm', cancelText = 'Keep order', danger = true, withInput = false, error = '' }) {
+        return new Promise(resolve => {
+            bloomDialogResolve = resolve;
+            document.getElementById('bloomDialogTitle').textContent = title;
+            document.getElementById('bloomDialogMsg').textContent = message;
+            const okBtn = document.getElementById('bloomDialogOkBtn');
+            okBtn.textContent = confirmText;
+            okBtn.classList.toggle('safe', !danger);
+            document.getElementById('bloomDialogCancelBtn').textContent = cancelText;
+
+            const inputWrap = document.getElementById('bloomDialogInputWrap');
+            const input = document.getElementById('bloomDialogInput');
+            inputWrap.style.display = withInput ? 'block' : 'none';
+            input.value = '';
+
+            const errEl = document.getElementById('bloomDialogError');
+            errEl.textContent = error;
+            errEl.style.display = error ? 'block' : 'none';
+
+            document.getElementById('bloomDialogOverlay').classList.add('open');
+            if (withInput) setTimeout(() => input.focus(), 50);
+        });
+    }
+
+    function closeBloomDialog(confirmed) {
+        const value = document.getElementById('bloomDialogInput').value;
+        document.getElementById('bloomDialogOverlay').classList.remove('open');
+        const resolve = bloomDialogResolve;
+        bloomDialogResolve = null;
+        if (resolve) resolve({ confirmed: confirmed, value: value });
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (!bloomDialogResolve) return;
+        if (e.key === 'Escape') closeBloomDialog(false);
+        if (e.key === 'Enter') closeBloomDialog(true);
+    });
+
+    // ---------- Walk-in: Confirm ----------
+    async function confirmWalkIn(orderId, selectEl) {
+        const answer = await askBloomDialog({
+            title: 'Confirm this order?',
+            message: 'Once an order is confirmed it is final. You will not be able to change its status again.',
+            confirmText: 'Yes, confirm',
+            cancelText: 'Not yet',
+            danger: false
+        });
+        if (!answer.confirmed) {
+            selectEl.value = selectEl.dataset.prevStatus;
+            return;
+        }
+        await writeFinalStatus(orderId, 'confirmed', {}, selectEl);
+    }
+
+    // ---------- Walk-in: Cancel (employees limited to 3 a day) ----------
+    // Counts today's cancelled walk-in orders for this branch. `allOrders` is
+    // already filtered to the current branch by the Firestore listener.
+    function countTodaysWalkInCancellations() {
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        return allOrders.filter(o => {
+            if (isOnlineOrder(o)) return false;
+            if (String(o.status || '').toLowerCase() !== 'cancelled') return false;
+            // cancelledAt is what we write now; older cancels only have updated_at.
+            const raw = o.cancelledAt || o.updated_at || o.updatedAt;
+            const d = (raw && typeof raw.toDate === 'function') ? raw.toDate() : (raw ? new Date(raw) : null);
+            return d && !isNaN(d) && d >= startOfToday;
+        }).length;
+    }
+
+    async function cancelWalkIn(orderId, selectEl) {
+        const used = countTodaysWalkInCancellations();
+        let allowed = false;
+
+        if (!isStaffRole) {
+            // Admins / super-admins: plain "are you sure", no limit.
+            const answer = await askBloomDialog({
+                title: 'Cancel this order?',
+                message: 'Once an order is cancelled it is final. This cannot be undone.',
+                confirmText: 'Yes, cancel order'
+            });
+            allowed = answer.confirmed;
+        } else if (used < DAILY_CANCEL_LIMIT) {
+            const answer = await askBloomDialog({
+                title: 'Cancel this order?',
+                message: 'Once an order is cancelled it is final. This cannot be undone.\n\n'
+                    + 'Cancellations used today at this branch: ' + used + ' of ' + DAILY_CANCEL_LIMIT + '.',
+                confirmText: 'Yes, cancel order'
+            });
+            allowed = answer.confirmed;
+        } else {
+            allowed = await requestOverrideCode(orderId, used);
+        }
+
+        if (!allowed) {
+            selectEl.value = selectEl.dataset.prevStatus;
+            return;
+        }
+
+        await writeFinalStatus(orderId, 'cancelled', {
+            paymentStatus: 'Voided',
+            cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+            cancelledBy: window.currentUserName || 'Staff'
+        }, selectEl);
+    }
+
+    // The branch has hit the daily limit: ask for a single-use code made on
+    // the Override Codes page. The code is checked (and burned) by the server.
+    async function requestOverrideCode(orderId, used) {
+        let lastError = '';
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const answer = await askBloomDialog({
+                title: 'Manager override required',
+                message: 'This branch has already cancelled ' + used + ' walk-in orders today. '
+                    + 'Ask an admin for a single-use override code to continue.',
+                confirmText: 'Verify & cancel',
+                cancelText: 'Keep order',
+                withInput: true,
+                error: lastError
+            });
+            if (!answer.confirmed) return false;
+
+            const code = answer.value.trim();
+            if (!code) {
+                lastError = 'Please enter the override code.';
+                attempt--;            // an empty box should not use up a try
+                continue;
+            }
+
+            const result = await verifyOverrideCode(code, orderId);
+            if (result.valid) return true;
+            lastError = result.message || 'Invalid or already-used override code.';
+        }
+        alert('Too many wrong codes. The order was NOT cancelled.');
+        return false;
+    }
+
+    async function verifyOverrideCode(code, orderId) {
+        try {
+            const user = firebase.auth().currentUser;
+            if (!user) {
+                return { valid: false, message: 'Your sign-in expired. Reload the page and try again.' };
+            }
+            const token = await user.getIdToken();
+            const response = await fetch('verify_override_code.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ branchId: window.currentBranch, code: code, orderId: orderId })
+            });
+            let data = {};
+            try { data = await response.json(); } catch (_) { data = {}; }
+            if (!data.success) return { valid: false, message: data.message || 'Could not verify the code. Please try again.' };
+            return { valid: data.valid === true, message: data.message };
+        } catch (e) {
+            return { valid: false, message: 'Network problem while checking the code. Please try again.' };
+        }
+    }
+
+    // Writes Confirmed / Cancelled and locks the order in the same update, so
+    // it is "touch move" from the moment it is saved.
+    async function writeFinalStatus(orderId, newStatus, extraFields, selectEl) {
+        try {
+            if (await window.blockIfLocked(orderId)) {
+                selectEl.value = selectEl.dataset.prevStatus;
+                return;
+            }
+            await db.collection('orders').doc(orderId).update({
+                status: newStatus,
+                locked: true,
+                updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+                ...extraFields
+            });
+            selectEl.dataset.prevStatus = newStatus;
+        } catch (e) {
+            alert('Update rejected: ' + e.message);
+            selectEl.value = selectEl.dataset.prevStatus;
+        }
     }
 
     async function secureStatusTransition(orderId, newStatus, selectEl) {

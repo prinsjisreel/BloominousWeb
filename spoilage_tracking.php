@@ -103,11 +103,11 @@ include 'templates/header.php';
                     <label>Rationale</label>
                     <select id="reason" required onchange="calculateLoss()">
                         <option value="Natural Wilting">Natural Wilting</option>
-                        <option value="Damaged during delivery">Logistic Compromise</option>
-                        <option value="Handling Error">Handling Discrepancy</option>
-                        <option value="Pest/Disease">Biological Stress</option>
-                        <option value="Salvaged / Reusable Scraps">Resource Recovery (Salvage)</option>
-                        <option value="Other">Miscellaneous</option>
+                        <option value="Damaged during delivery">Damaged during delivery</option>
+                        <option value="Handling Error">Handling Error</option>
+                        <option value="Pest/Disease">Pest/Disease</option>
+                        <option value="Salvaged / Reusable Scraps">Salvaged / Reusable Scraps</option>
+                        <option value="Other">Other</option>
                     </select>
                 </div>
             </div>
@@ -156,6 +156,10 @@ include 'templates/header.php';
     const REPORTER_NAME = <?php echo $reporterJs; ?>;
     const SAVE_BTN_LABEL = 'Execute Depletion & Reconciliation';
     let inventoryData = [];
+    // NEW: remembers the last dropdown HTML we drew and whether we already
+    // auto-opened the form, so live Firestore updates can't reset the form.
+    let lastOptionsHtml = '';
+    let formAutoOpened = false;
 
     document.addEventListener('DOMContentLoaded', () => {
         const spoilageData = document.getElementById('spoilageData');
@@ -176,11 +180,28 @@ include 'templates/header.php';
                 const selected = doc.id === preSelectedId ? 'selected' : '';
                 options += `<option value="${doc.id}" ${selected}>${p.name} (Stock: ${p.stock || 0})</option>`;
             });
-            productSelect.innerHTML = options;
-            
-            if (preSelectedId) {
-                updateLossAmount(productSelect);
-                toggleForm();
+
+            // NEW: this listener fires on EVERY inventory change (any sale,
+            // restock or edit by anyone). Before, each firing rebuilt the
+            // dropdown (wiping what the user picked) and, when opened from the
+            // dumpster icon, flipped the form open/closed again. Now we only
+            // redraw when the list really changed, and keep the user's choice.
+            if (options !== lastOptionsHtml) {
+                const keepSelection = productSelect.value || preSelectedId || '';
+                productSelect.innerHTML = options;
+                lastOptionsHtml = options;
+                if (keepSelection && inventoryData.some(p => p.id === keepSelection)) {
+                    productSelect.value = keepSelection;
+                }
+                if (productSelect.value) {
+                    updateLossAmount(productSelect);
+                }
+            }
+
+            // NEW: open the form ONCE for ?productId=... (not toggle each time).
+            if (preSelectedId && !formAutoOpened) {
+                formAutoOpened = true;
+                openForm();
             }
         });
 
@@ -393,6 +414,16 @@ include 'templates/header.php';
             } else {
                 document.getElementById('lossAmount').value = (price * qty).toFixed(2);
             }
+        }
+    }
+
+    // NEW: opens the form without ever closing it (toggleForm flips, which is
+    // wrong for automatic calls).
+    function openForm() {
+        const x = document.getElementById("spoilageForm");
+        if (x.style.display !== "block") {
+            x.style.display = "block";
+            x.scrollIntoView({ behavior: 'smooth' });
         }
     }
 

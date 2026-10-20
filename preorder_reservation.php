@@ -60,6 +60,17 @@ include 'templates/header.php';
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.bg-gray-50, .bg-gray-100) { background-color: var(--surface-alt); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(.border-gray-50, .border-gray-100, .border-gray-200) { border-color: var(--border-color); }
     html[data-theme="dark"] :is(.pos-content, #reservationSettingsModalContent) :is(input, select) { color-scheme: dark; }
+
+    /* NEW: the modal card ITSELF carries the .bg-white / .border-gray-100 classes.
+       The rules above only match elements INSIDE it (a space = "descendant"),
+       so the card stayed white while its text turned light = unreadable. */
+    html[data-theme="dark"] #reservationSettingsModalContent {
+        background-color: var(--surface);
+        border-color: var(--border-color);
+    }
+    html[data-theme="dark"] #reservationSettingsModalContent :is(input, select) {
+        color: var(--text-main);
+    }
 </style>
 
 <main class="pos-content" style="padding: 1.5rem; max-width: 1400px; margin: 0 auto;">
@@ -203,6 +214,10 @@ include 'templates/header.php';
                 const method = (entry.method || '').toString();
                 const methodLabel = method ? method.charAt(0).toUpperCase() + method.slice(1) : 'Payment';
                 const note = (entry.note || '').toString();
+                // NEW: an entry is "awaiting" while the customer has not paid yet.
+                // It is listed for history, but it is NOT counted in "Paid".
+                const entryStatus = (entry.status || '').toString();
+                const isAwaiting = entryStatus === 'pending_checkout' || entryStatus === 'pending_confirmation';
                 let dateStr = '';
                 if (entry.recorded_at && typeof entry.recorded_at.toDate === 'function') {
                     dateStr = entry.recorded_at.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -213,11 +228,22 @@ include 'templates/header.php';
                             <i class="fa-solid fa-receipt mr-1" style="color:var(--text-light);"></i>
                             ${dateStr} &middot; ${methodLabel}${note ? ` (${note})` : ''}
                         </span>
-                        <span style="font-weight:800; flex-shrink:0;">₱${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                        <span style="font-weight:800; flex-shrink:0; ${isAwaiting ? 'color:var(--text-light); font-style:italic;' : ''}">
+                            ${isAwaiting ? 'Awaiting ' : ''}₱${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
                     </div>
                 `;
             }).join('')
             : `<p style="font-size:0.72rem; color:var(--text-light); font-style:italic; margin:4px 0;">No balance payments recorded yet.</p>`;
+
+        // NEW: show a manual "Check payment" button while a PayMongo deposit is pending.
+        const hasPendingCheckout = !!data.checkout_session_id &&
+            history.some(e => (e.status || '') === 'pending_checkout');
+        const checkPaymentHtml = hasPendingCheckout ? `
+            <button onclick="reconcileDeposit('${id}', true)" style="width:100%; background:none; border:2px dashed #f59e0b; color:#b45309; padding:8px; border-radius:10px; font-size:0.68rem; font-weight:800; text-transform:uppercase; letter-spacing:1px; cursor:pointer; margin-bottom:8px;">
+                <i class="fa-solid fa-rotate mr-1"></i> Check GCash / Maya payment
+            </button>
+        ` : '';
 
         const actionHtml = balance > 0 ? `
             <div style="display:flex; gap:6px; margin-bottom:6px;">
@@ -260,6 +286,7 @@ include 'templates/header.php';
                 </div>
                 ${historyHtml}
                 <div style="margin-top:10px;">
+                    ${checkPaymentHtml}
                     ${actionHtml}
                 </div>
             </div>
@@ -418,6 +445,7 @@ include 'templates/header.php';
                     return bMs - aMs;
                 });
             renderReservations();
+            autoReconcilePendingDeposits(); // NEW
         }, err => {
             console.error('Could not load reservations:', err);
             loadError = err.message;
@@ -498,6 +526,63 @@ include 'templates/header.php';
                 alert('Purge Failure: ' + err.message);
             }
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // NEW: PayMongo deposit reconciliation
+    //
+    // The app saves a reservation with a 'pending_checkout' ledger entry and
+    // the PayMongo session id. Once the customer pays, the SERVER (webhook or
+    // reconcile_reservation_payment.php) flips that entry to 'confirmed' and
+    // updates amount_paid / balance_due. This page just asks the server to
+    // check, so the browser can never invent a payment by itself.
+    // ---------------------------------------------------------------------
+    const reconcileInFlight = new Set();
+    const reconcileLastTry = {};          // reservationId -> timestamp of last attempt
+    const RECONCILE_COOLDOWN_MS = 30000;  // don't hammer PayMongo more than every 30s per booking
+
+    async function reconcileDeposit(id, manual) {
+        if (reconcileInFlight.has(id)) return;
+        reconcileInFlight.add(id);
+        reconcileLastTry[id] = Date.now();
+        try {
+            const res = await fetch('reconcile_reservation_payment.php', {
+                method: 'POST',
+                credentials: 'same-origin',          // sends the staff PHP session cookie
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservation_id: id })
+            });
+            const result = await res.json().catch(() => ({}));
+            if (manual) {
+                if (!res.ok) {
+                    alert('Could not check payment: ' + (result.message || ('HTTP ' + res.status)));
+                } else if (result.outcome === 'paid') {
+                    alert('Payment found and recorded in the ledger.');
+                } else if (result.outcome === 'already_recorded') {
+                    alert('This payment was already recorded.');
+                } else {
+                    alert('No completed payment found yet. If the customer just paid, wait a few seconds and try again.');
+                }
+            }
+            // No need to re-render: the Firestore listener fires when the server updates the doc.
+        } catch (err) {
+            if (manual) alert('Could not check payment: ' + err.message);
+            console.warn('Deposit reconcile failed for', id, err);
+        } finally {
+            reconcileInFlight.delete(id);
+        }
+    }
+
+    function autoReconcilePendingDeposits() {
+        const now = Date.now();
+        latestReservations.forEach(r => {
+            const history = Array.isArray(r.data.payment_history) ? r.data.payment_history : [];
+            const pending = !!r.data.checkout_session_id &&
+                history.some(e => (e.status || '') === 'pending_checkout');
+            if (!pending) return;
+            if (now - (reconcileLastTry[r.id] || 0) < RECONCILE_COOLDOWN_MS) return;
+            reconcileDeposit(r.id, false);
+        });
     }
 
     async function recordPayment(id) {

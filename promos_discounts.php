@@ -1,6 +1,13 @@
 <?php 
 /**
  * BLOOMINOUS - Voucher Management (Firebase Spoke)
+ *
+ * Promos created here double as REWARDS in the customer app's catalog:
+ *   - promo_code          -> internal only, never shown to customers
+ *   - discount_percentage -> shown to customers as "X% Off Voucher"
+ *   - points_cost         -> how many Bloom Points it costs (0 = not in catalog)
+ *   - expiry_date         -> hides the reward from the catalog after this date
+ * Loyalty rules (settings/loyalty_config) decide how customers EARN points.
  */
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
@@ -21,8 +28,9 @@ include 'templates/header.php';
     .promo-hint { font-size: 0.65rem; color: #aaa; margin-top: 4px; font-weight: 600; }
 
     .promo-form-card { display: none; background: var(--surface); padding: 3rem; border-radius: 35px; margin-bottom: 3rem; border: 1px dashed var(--primary); }
-    .promo-form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
-    .promo-form-grid .span-all { grid-column: span 3; }
+    /* 4 columns now: code, discount %, points cost, expiry */
+    .promo-form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; }
+    .promo-form-grid .span-all { grid-column: span 4; }
 
     .loyalty-card { background: var(--surface); padding: 3rem; border-radius: 35px; margin-bottom: 3rem; border: 2px solid #7B79F2; box-shadow: 0 15px 45px rgba(123, 121, 242, 0.05); }
     .loyalty-head { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
@@ -46,6 +54,12 @@ include 'templates/header.php';
     .promo-amount small { font-size: 0.8rem; font-weight: 400; color: var(--text-light); text-transform: uppercase; letter-spacing: 1px; }
     .promo-expiry { font-size: 0.7rem; color: var(--text-light); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
     .promo-glow { position: absolute; bottom: -15px; left: 50%; transform: translateX(-50%); width: 120%; height: 20px; background: var(--primary); opacity: 0.05; filter: blur(10px); }
+
+    /* Points-cost badge + button (new) */
+    .promo-cost { display: inline-block; margin-top: 14px; padding: 6px 14px; border-radius: 20px; font-size: 0.7rem; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; background: rgba(123, 121, 242, 0.12); color: #7B79F2; }
+    .promo-cost.promo-cost-off { background: rgba(150, 150, 150, 0.15); color: #888; }
+    .promo-setcost { display: block; margin: 12px auto 0; background: none; border: 1px solid var(--border-color); color: var(--text-light); border-radius: 12px; padding: 6px 14px; font-size: 0.65rem; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; transition: 0.2s; }
+    .promo-setcost:hover { border-color: #7B79F2; color: #7B79F2; }
 
     @media (max-width: 800px) {
         .promo-form-grid, .loyalty-form-grid { grid-template-columns: 1fr; }
@@ -71,7 +85,7 @@ include 'templates/header.php';
     <div class="flex justify-between items-center mb-12">
         <div>
             <h1 class="brand-font text-5xl font-black text-gray-800">Promos & Discounts</h1>
-            <p class="text-gray-400 text-sm font-medium mt-1">Manage discount coupon codes and loyalty promotions.</p>
+            <p class="text-gray-400 text-sm font-medium mt-1">Vouchers created here appear in the customer app's Rewards Catalog, redeemable with Bloom Points.</p>
         </div>
         <button onclick="document.getElementById('promoform').style.display='block'" class="btn-primary hover:scale-105 active:scale-95 transition-all flex items-center px-8 shadow-lg shadow-pink-100 uppercase tracking-widest text-xs font-black">
             <i class="fa-solid fa-plus mr-3"></i> Create New Promo
@@ -84,10 +98,16 @@ include 'templates/header.php';
             <div>
                 <label class="promo-label" for="promoCode">Spectral Code</label>
                 <input type="text" id="promoCode" class="promo-input" placeholder="CODE (e.g. BLOOM20)" required>
+                <p class="promo-hint">Internal only. Customers never see this code.</p>
             </div>
             <div>
                 <label class="promo-label" for="discount">Percentage Ratio (%)</label>
-                <input type="number" id="discount" class="promo-input" placeholder="Discount %" required>
+                <input type="number" id="discount" class="promo-input" placeholder="Discount %" min="1" max="100" required>
+            </div>
+            <div>
+                <label class="promo-label" for="pointsCost">Points Cost</label>
+                <input type="number" id="pointsCost" class="promo-input" placeholder="e.g. 100" min="0" required>
+                <p class="promo-hint">Bloom Points needed to redeem it. Use 0 to keep it out of the app catalog.</p>
             </div>
             <div>
                 <label class="promo-label" for="expiry">Sunset Date</label>
@@ -105,7 +125,7 @@ include 'templates/header.php';
             </div>
             <div>
                 <h4 class="brand-font text-2xl font-black text-gray-800" style="font-size: 1.5rem; font-weight: 800; margin: 0;">Loyalty Points Authority Rules</h4>
-                <p class="loyalty-sub font-medium">Configure maximum products a customer can purchase to earn custom loyalty points.</p>
+                <p class="loyalty-sub font-medium">Controls how customers EARN Bloom Points. Customers spend them on the vouchers below.</p>
             </div>
         </div>
         <form id="loyaltyRulesForm" class="loyalty-form-grid">
@@ -155,18 +175,26 @@ include 'templates/header.php';
                 const id = doc.id;
                 const expiry = p.expiry_date ? new Date(p.expiry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
 
+                // Older promos have no points_cost, so treat them as 0 (not in the catalog).
+                const cost = Number(p.points_cost) || 0;
+                const costBadge = cost > 0
+                    ? `<div class="promo-cost">${cost} pts in app catalog</div>`
+                    : `<div class="promo-cost promo-cost-off">Not in app catalog</div>`;
+
                 html += `
                 <div class="promo-card">
                     <button onclick="deletePromo('${id}')" class="promo-delete" title="Delete voucher">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
-                    <div class="promo-eyebrow">Voucher Asset</div>
+                    <div class="promo-eyebrow">Voucher Asset · Code hidden from customers</div>
                     <div class="brand-font promo-code">${p.promo_code}</div>
                     <div class="brand-font promo-amount">
                         <span>${p.discount_percentage}%</span>
                         <small>Reduction</small>
                     </div>
                     <div class="promo-expiry">Expiring: ${expiry}</div>
+                    ${costBadge}
+                    <button onclick="setPromoCost('${id}', ${cost})" class="promo-setcost">Set Points Cost</button>
                     <div class="promo-glow"></div>
                 </div>
                 `;
@@ -220,6 +248,18 @@ include 'templates/header.php';
 
             try {
                 const code = document.getElementById('promoCode').value.toUpperCase();
+                const discount = parseInt(document.getElementById('discount').value);
+                const pointsCost = parseInt(document.getElementById('pointsCost').value);
+
+                // Validate numbers before they ever reach the database
+                if (!(discount >= 1 && discount <= 100)) {
+                    alert('Discount must be between 1 and 100.');
+                    return; // the finally block below resets the button
+                }
+                if (!(pointsCost >= 0)) {
+                    alert('Points cost must be 0 or higher.');
+                    return;
+                }
                 
                 // Check if code exists
                 const check = await db.collection('promos').where('promo_code', '==', code).get();
@@ -230,7 +270,8 @@ include 'templates/header.php';
 
                 await db.collection('promos').add({
                     promo_code: code,
-                    discount_percentage: parseInt(document.getElementById('discount').value),
+                    discount_percentage: discount,
+                    points_cost: pointsCost,
                     expiry_date: document.getElementById('expiry').value,
                     created_at: firebase.firestore.FieldValue.serverTimestamp()
                 });
@@ -245,6 +286,25 @@ include 'templates/header.php';
             }
         };
     });
+
+    // Lets staff add or change the points cost of an existing promo.
+    // Entering 0 removes it from the app catalog.
+    async function setPromoCost(id, currentCost) {
+        const input = prompt('Points cost for this voucher (0 = hide from app catalog):', currentCost);
+        if (input === null) return; // staff pressed Cancel
+
+        const newCost = parseInt(input);
+        if (isNaN(newCost) || newCost < 0) {
+            alert('Please enter a whole number, 0 or higher.');
+            return;
+        }
+
+        try {
+            await db.collection('promos').doc(id).update({ points_cost: newCost });
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
 
     async function deletePromo(id) {
         if (confirm('Are you sure you want to delete this voucher?')) {
