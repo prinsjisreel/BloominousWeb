@@ -412,6 +412,15 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                     </div>
                 </div>
 
+                <!-- Shown instead of the branch card when no branch delivers to the chosen address -->
+                <div id="outsideAreaCard" class="hidden mt-4 p-4 rounded-2xl bg-red-50 border border-red-100 flex items-start gap-3">
+                    <i class="fa-solid fa-circle-exclamation text-red-500 mt-0.5"></i>
+                    <div>
+                        <p class="text-sm font-bold text-red-600">Outside our delivery area</p>
+                        <p id="outsideAreaText" class="text-[11px] font-semibold text-red-500 leading-relaxed"></p>
+                    </div>
+                </div>
+
                 <button type="button" id="getLocationBtn" class="mt-4 px-5 py-3 bg-[#7B79F2] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#5a58d1] transition-all flex items-center gap-2 shadow-sm disabled:opacity-60 disabled:cursor-wait">
                     <i class="fa-solid fa-location-crosshairs text-xs"></i> Get Current Location
                 </button>
@@ -668,6 +677,8 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         const nearestBranchCard = document.getElementById('nearestBranchCard');
         const nearestBranchNameEl = document.getElementById('nearestBranchName');
         const nearestBranchDistanceEl = document.getElementById('nearestBranchDistance');
+        const outsideAreaCard = document.getElementById('outsideAreaCard');
+        const outsideAreaText = document.getElementById('outsideAreaText');
         const getLocationBtn = document.getElementById('getLocationBtn');
         const notesInput = document.getElementById('orderNotes');
         const paymentDropdown = document.getElementById('paymentMethod');
@@ -741,6 +752,8 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         let deliveryReady = false;
         let isUsingRealRoadDistance = false;
         let isCalculatingFee = false;
+        let outsideDeliveryArea = false;  // true = no branch delivers to the chosen address
+        let outsideAreaMessage = '';
         let isAutoFillingAddress = false;
         let feeRequestId = 0;             // only the newest fee calculation may update the page
 
@@ -1174,7 +1187,7 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
         const branchesLoadedPromise = db.collection('branches').get().then(snap => {
             snap.forEach(doc => {
                 const d = doc.data();
-                allBranches.push({ id: doc.id, name: d.name || doc.id, latitude: d.latitude, longitude: d.longitude });
+                allBranches.push({ id: doc.id, name: d.name || doc.id, latitude: d.latitude, longitude: d.longitude, deliveryRadiusKm: d.deliveryRadiusKm });
             });
         }).catch(error => console.warn('Could not load branches:', error));
 
@@ -1686,18 +1699,53 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 await branchesLoadedPromise;
                 if (allBranches.length === 0) throw new Error('No branches found to calculate delivery.');
 
-                // Nearest branch by straight-line distance
+                // Nearest branch that can actually deliver here (straight-line distance
+                // against the branch's delivery radius), plus the nearest branch of all
+                // so we can explain WHY an address is out of range.
                 let nearest = null;
                 let minDistanceKm = Infinity;
+                let nearestAny = null;
+                let nearestAnyKm = Infinity;
                 allBranches.forEach(b => {
                     const bLat = typeof b.latitude === 'number' ? b.latitude : DEFAULT_BRANCH_LAT;
                     const bLng = typeof b.longitude === 'number' ? b.longitude : DEFAULT_BRANCH_LNG;
+                    const radiusKm = typeof b.deliveryRadiusKm === 'number' ? b.deliveryRadiusKm : null;
                     const d = calculateDistance(bLat, bLng, destLat, destLng);
-                    if (d < minDistanceKm) {
+
+                    if (d < nearestAnyKm) {
+                        nearestAnyKm = d;
+                        nearestAny = { name: b.name, radiusKm: radiusKm };
+                    }
+                    // A branch with no radius set (older branches) has no limit.
+                    const canDeliver = radiusKm === null || radiusKm <= 0 || d <= radiusKm;
+                    if (canDeliver && d < minDistanceKm) {
                         minDistanceKm = d;
                         nearest = { id: b.id, name: b.name, lat: bLat, lng: bLng };
                     }
                 });
+
+                // No branch reaches this address: say so, and block the order.
+                if (!nearest) {
+                    if (requestId !== feeRequestId) return;
+                    const limit = nearestAny.radiusKm !== null ? ' and delivers within ' + nearestAny.radiusKm + ' km' : '';
+                    outsideDeliveryArea = true;
+                    outsideAreaMessage = "Sorry, we don't deliver to this address. " + nearestAny.name
+                        + ' is the closest branch' + limit + ', but this address is about ' + nearestAnyKm.toFixed(1) + ' km away.';
+                    nearestBranchName = '';
+                    branchLat = null;
+                    branchLng = null;
+                    destinationLat = null;
+                    destinationLng = null;
+                    distanceKm = 0;
+                    deliveryFee = 0;
+                    deliveryReady = false;
+                    isUsingRealRoadDistance = false;
+                    renderNearestBranch();
+                    renderOutsideArea();
+                    renderRouteMap();
+                    showToast(outsideAreaMessage, 'error');
+                    return;
+                }
 
                 // Real road distance when a Google key is configured, else the estimate
                 const roadKm = await getRealRoadDistance(nearest.lat, nearest.lng, destLat, destLng);
@@ -1715,8 +1763,11 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                 isUsingRealRoadDistance = roadKm !== null;
                 deliveryFee = roundMoney(km * FEE_PER_KM);
                 deliveryReady = true;
+                outsideDeliveryArea = false;
+                outsideAreaMessage = '';
 
                 renderNearestBranch();
+                renderOutsideArea();
                 renderRouteMap();
             } catch (error) {
                 if (requestId === feeRequestId) {
@@ -1744,10 +1795,23 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
             deliveryFee = 0;
             deliveryReady = false;
             isUsingRealRoadDistance = false;
+            outsideDeliveryArea = false;
+            outsideAreaMessage = '';
             renderNearestBranch();
+            renderOutsideArea();
             renderRouteMap();
             updateLocationButton();
             renderCart();
+        }
+
+        // Red card shown when no branch delivers to the chosen address.
+        function renderOutsideArea() {
+            if (!outsideDeliveryArea) {
+                outsideAreaCard.classList.add('hidden');
+                return;
+            }
+            outsideAreaText.innerText = outsideAreaMessage;
+            outsideAreaCard.classList.remove('hidden');
         }
 
         function renderNearestBranch() {
@@ -1995,6 +2059,9 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
             if (isCalculatingFee) {
                 return 'Still calculating your delivery fee — one moment.';
             }
+            if (outsideDeliveryArea) {
+                return outsideAreaMessage;
+            }
             if (!deliveryReady) {
                 return sendAsGift
                     ? "Please select the recipient's address from the suggestions so we can calculate the delivery fee."
@@ -2098,6 +2165,10 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                         isGift: sendAsGift,
                         customerLat: deviceLat,   // real device GPS only (fraud signal), or null
                         customerLng: deviceLng,
+                        // Where the flowers go (the recipient for a gift). The server checks
+                        // it against the branch's delivery radius.
+                        destinationLat: destinationLat,
+                        destinationLng: destinationLng,
                         otpVerified: otpVerifiedThisSession,
                         deviceHash: deviceHash,
                         notes: notesInput.value.trim()
@@ -2126,6 +2197,16 @@ if ($amount <= 0 && empty($items) && !$allowResume) {
                         isCodRestricted = true;
                         updatePaymentAvailability();
                         showToast(result.message, 'error');
+                        setButtonReady();
+                        return;
+                    }
+                    if (result.code === 'OUT_OF_DELIVERY_AREA') {
+                        outsideDeliveryArea = true;
+                        outsideAreaMessage = result.message || "Sorry, we don't deliver to this address.";
+                        deliveryReady = false;
+                        renderOutsideArea();
+                        renderCart();
+                        showToast(outsideAreaMessage, 'error');
                         setButtonReady();
                         return;
                     }

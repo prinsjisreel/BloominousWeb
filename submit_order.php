@@ -333,6 +333,60 @@ if ($shippingFee < 0 || $shippingFee > BLOOM_ORDER_MAX_SHIPPING_FEE) {
     bloom_json_response(['success' => false, 'code' => 'INVALID_FEE', 'message' => 'The delivery fee looks wrong. Please recalculate your delivery location and try again.'], 400);
 }
 
+// --- 3-area. Delivery area gate ---
+// Each branch has an admin-set delivery radius: branches/{id}.deliveryRadiusKm
+// (set in manage_branches.php or in the app's branch screen). The website and
+// the mobile app BOTH come through this file, so this is the one check neither
+// can bypass. A branch with no radius (older ones) has no limit.
+//
+// The client sends where the flowers are going as destinationLat/destinationLng
+// (the recipient's address for a gift). Orders from older app versions send
+// neither, so they cannot be measured; they are let through unless this is
+// switched to true (do that once everyone has updated).
+const BLOOM_REQUIRE_DELIVERY_COORDS = false;
+
+$destLat = isset($body['destinationLat']) && is_numeric($body['destinationLat']) ? (float) $body['destinationLat'] : null;
+$destLng = isset($body['destinationLng']) && is_numeric($body['destinationLng']) ? (float) $body['destinationLng'] : null;
+
+try {
+    $areaBranch = bloom_firestore_get_document_rest('branches', $branchId);
+    if ($areaBranch !== null) {
+        $areaRadiusKm  = $areaBranch['deliveryRadiusKm'] ?? null;
+        $areaBranchLat = $areaBranch['latitude'] ?? null;
+        $areaBranchLng = $areaBranch['longitude'] ?? null;
+
+        if (is_numeric($areaRadiusKm) && (float) $areaRadiusKm > 0
+            && is_numeric($areaBranchLat) && is_numeric($areaBranchLng)) {
+
+            $radiusLabel = rtrim(rtrim(number_format((float) $areaRadiusKm, 1), '0'), '.');
+
+            if ($destLat === null || $destLng === null) {
+                if (BLOOM_REQUIRE_DELIVERY_COORDS) {
+                    bloom_json_response([
+                        'success' => false,
+                        'code' => 'OUT_OF_DELIVERY_AREA',
+                        'message' => 'Please pin your delivery address so we can confirm it is within ' . $radiusLabel . ' km of this branch.',
+                    ], 422);
+                }
+            } else {
+                $areaDistanceKm = bloom_haversine_km((float) $areaBranchLat, (float) $areaBranchLng, $destLat, $destLng);
+                // 0.05 km of slack so rounding differences never reject a valid address.
+                if ($areaDistanceKm > (float) $areaRadiusKm + 0.05) {
+                    bloom_json_response([
+                        'success' => false,
+                        'code' => 'OUT_OF_DELIVERY_AREA',
+                        'message' => 'Sorry, this branch only delivers within ' . $radiusLabel . ' km of its location. Your address is about ' . number_format($areaDistanceKm, 1) . ' km away.',
+                    ], 422);
+                }
+            }
+        }
+    }
+} catch (\Throwable $e) {
+    // Fail open, like the other checks in this file: a lookup problem must
+    // never block a customer's order. The details go to the server log.
+    error_log('Delivery area check failed: ' . $e->getMessage());
+}
+
 // --- 3a. Shared web + app contract ---
 // One payment-method vocabulary for both platforms. Older spellings are
 // mapped onto it ('COD' from the previous web checkout, 'paymaya' from

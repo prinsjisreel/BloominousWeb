@@ -33,12 +33,21 @@ include 'templates/header.php';
     .badge-paid { background: rgba(46, 204, 113, 0.12); color: #27ae60; }
     .badge-pending { background: #fff9e6; color: #f39c12; }
     .badge-voided, .badge-refunded, .badge-partially-refunded { background: #f2f2f2; color: #888; }
+    /* Cancelled = red, so it can never be confused with Pending (amber) or Paid (green). */
+    .badge-cancelled { background: rgba(239, 68, 68, 0.14); color: #dc2626; }
     .badge-channel-pos { background: rgba(123, 121, 242, 0.12); color: var(--secondary); }
     .badge-channel-web { background: rgba(245, 158, 11, 0.12); color: var(--primary); }
 
     .row-actions { display: flex; gap: 8px; }
     .row-actions a { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-light); transition: 0.2s; }
     .row-actions a:hover { border-color: var(--primary); color: var(--primary); }
+
+    /* A cancelled record stays in the list (it is still a record), but looks "closed". */
+    .row-cancelled td { opacity: 0.72; }
+    .row-cancelled .amount-cell { text-decoration: line-through; }
+    .row-cancelled td.status-cell { opacity: 1; }   /* keep the red badge fully visible */
+    .cancel-note { margin-top: 6px; font-size: 0.66rem; font-weight: 700; color: #dc2626; letter-spacing: 0.3px; }
+    html[data-theme="dark"] .cancel-note { color: #f87171; }
 
     .filter-select { padding: 12px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface); color: var(--text-main); font-weight: 700; font-size: 0.82rem; outline: none; cursor: pointer; }
 
@@ -49,6 +58,7 @@ include 'templates/header.php';
     html[data-theme="dark"] #invoiceTable td { border-bottom-color: var(--border-color); }
     html[data-theme="dark"] .badge-pending { background: rgba(243, 156, 18, 0.15); color: #fbbf24; }
     html[data-theme="dark"] :is(.badge-voided, .badge-refunded, .badge-partially-refunded) { background: var(--surface-alt); color: var(--text-light); }
+    html[data-theme="dark"] .badge-cancelled { background: rgba(239, 68, 68, 0.18); color: #f87171; }
     html[data-theme="dark"] .filter-select { color-scheme: dark; }
     html[data-theme="dark"] .list-card { box-shadow: none; }
 
@@ -70,6 +80,7 @@ include 'templates/header.php';
                 <option value="">All Payment Statuses</option>
                 <option value="Paid">Paid</option>
                 <option value="Pending">Pending</option>
+                <option value="Cancelled">Cancelled</option>
                 <option value="Voided">Voided</option>
                 <option value="Refunded">Refunded</option>
                 <option value="Partially Refunded">Partially Refunded</option>
@@ -127,6 +138,23 @@ include 'templates/header.php';
         document.getElementById('statusFilter').addEventListener('change', renderInvoiceRows);
     });
 
+    // An order counts as cancelled when its status says so. Customers cancel with
+    // 'cancelled' (lowercase), staff with 'Cancelled', so compare in lowercase.
+    function isCancelledOrder(o) {
+        const s = String(o.status || '').toLowerCase();
+        return s === 'cancelled' || s === 'canceled';
+    }
+
+    // The one label shown in the Payment Status column AND used by the filter/search.
+    // A cancelled order used to be listed as "Pending" (its paymentStatus never
+    // changes when a customer cancels), which hid the cancellation. Money states
+    // that are already final (Voided / Refunded) keep their own, more specific label.
+    function displayStatus(o) {
+        const finalStates = ['Voided', 'Refunded', 'Partially Refunded'];
+        if (isCancelledOrder(o) && !finalStates.includes(o.paymentStatus)) return 'Cancelled';
+        return o.paymentStatus || (o.status === 'completed' || o.status === 'delivered' ? 'Paid' : 'Pending');
+    }
+
     function renderInvoiceRows() {
         const tbody = document.getElementById('invoiceRows');
         const searchVal = document.getElementById('invoiceSearch').value.toLowerCase();
@@ -136,9 +164,10 @@ include 'templates/header.php';
         let visibleCount = 0;
 
         allInvoiceRows.forEach(o => {
-            // Same fallback logic as invoice.php, so the badge here always matches
+            // Same helper as invoice.php, so the badge here always matches
             // what you'd see after clicking through — no inconsistent statuses.
-            const paymentStatus = o.paymentStatus || (o.status === 'cancelled' ? 'Voided' : (o.status === 'completed' || o.status === 'delivered' ? 'Paid' : 'Pending'));
+            const paymentStatus = displayStatus(o);
+            const cancelled = paymentStatus === 'Cancelled';
 
             if (statusVal && paymentStatus !== statusVal) return;
 
@@ -155,15 +184,24 @@ include 'templates/header.php';
             const haystack = `${invoiceId} ${customerName} ${channel} ${paymentStatus}`.toLowerCase();
             if (searchVal && !haystack.includes(searchVal)) return;
 
+            // Small red note under the badge: when it was cancelled, and a warning if
+            // money had already been received (so staff know a refund may be needed).
+            let cancelNote = '';
+            if (cancelled) {
+                const when = o.cancelledAt && o.cancelledAt.toDate ? o.cancelledAt.toDate().toLocaleDateString() : '';
+                const wasPaid = o.paymentStatus === 'Paid' ? ' · payment was received' : '';
+                cancelNote = `<div class="cancel-note">${when ? 'Cancelled ' + when : 'Order cancelled'}${wasPaid}</div>`;
+            }
+
             visibleCount++;
             html += `
-                <tr>
+                <tr class="${cancelled ? 'row-cancelled' : ''}">
                     <td class="font-bold text-gray-800">${invoiceId}</td>
                     <td><span class="badge ${o.type === 'POS' ? 'badge-channel-pos' : 'badge-channel-web'}">${channel}</span></td>
                     <td>${customerName}</td>
                     <td class="text-gray-400 text-xs font-semibold">${dateStr}</td>
-                    <td class="font-black text-pink-600">₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td><span class="badge badge-${paymentStatus.toLowerCase().replace(/\s+/g, '-')}">${paymentStatus}</span></td>
+                    <td class="amount-cell font-black text-pink-600">₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td class="status-cell"><span class="badge badge-${paymentStatus.toLowerCase().replace(/\s+/g, '-')}">${paymentStatus}</span>${cancelNote}</td>
                     <td>
                         <div class="row-actions">
                             <a href="invoice.php?id=${o.id}" title="View Invoice"><i class="fa-solid fa-eye"></i></a>
