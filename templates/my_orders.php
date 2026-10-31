@@ -228,7 +228,6 @@ if (!$user_id) {
         { key: 'to_deliver', label: 'To Deliver' },
         { key: 'to_rate',    label: 'To Rate' },
         { key: 'completed',  label: 'Completed' },
-        { key: 'cancelled',  label: 'Cancelled' }
     ];
 
     // What each card's top-right says for its stage.

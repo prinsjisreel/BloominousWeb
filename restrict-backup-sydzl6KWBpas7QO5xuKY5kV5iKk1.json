@@ -1,0 +1,67 @@
+﻿{
+    "email":  "prinsqtpotato@gmail.com",
+    "savedAt":  "2026-10-20T19:50:37.8923545Z",
+    "uid":  "sydzl6KWBpas7QO5xuKY5kV5iKk1",
+    "fields":  {
+                   "lastFraudActivityAt":  {
+                                               "timestampValue":  "2026-10-20T13:45:12Z"
+                                           },
+                   "fraudCategories":  {
+                                           "arrayValue":  {
+                                                              "values":  [
+                                                                             {
+                                                                                 "stringValue":  "fake_transaction"
+                                                                             },
+                                                                             {
+                                                                                 "stringValue":  "payment_fraud"
+                                                                             }
+                                                                         ]
+                                                          }
+                                       },
+                   "riskLevel":  {
+                                     "stringValue":  "high"
+                                 },
+                   "fraudCodes":  {
+                                      "arrayValue":  {
+                                                         "values":  [
+                                                                        {
+                                                                            "stringValue":  "velocity_repeat"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "history_amount_deviation"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "velocity_rapid"
+                                                                        }
+                                                                    ]
+                                                     }
+                                  },
+                   "fraudFlags":  {
+                                      "arrayValue":  {
+                                                         "values":  [
+                                                                        {
+                                                                            "stringValue":  "Repeat checkout within a 5-minute window"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order total P1,392.74 is above this customer\u0027s usual spending range (average P404.85 + 2 standard deviations = P1,013.81, from 3 orders in the last 60 days)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order total P5,082.74 is above this customer\u0027s usual spending range (average P651.82 + 2 standard deviations = P1,757.78, from 4 orders in the last 60 days)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Multiple rapid checkouts flagged (2 prior orders in under 5 minutes)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Multiple rapid checkouts flagged (3 prior orders in under 5 minutes)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Reviewed by admin: false alarm"
+                                                                        }
+                                                                    ]
+                                                     }
+                                  },
+                   "riskScore":  {
+                                     "integerValue":  "20"
+                                 }
+               }
+}

@@ -1,0 +1,11 @@
+# Tell browsers that .apk files are Android apps
+AddType application/vnd.android.package-archive .apk
+
+# Force the .apk to download (not open) and give it a clean name
+<FilesMatch "\.apk$">
+  Header set Content-Disposition "attachment; filename=\"bloominous.apk\""
+  Header set X-Content-Type-Options "nosniff"
+</FilesMatch>
+
+# Hide the folder's file list if someone visits without index.html
+Options -Indexes

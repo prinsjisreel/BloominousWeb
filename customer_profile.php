@@ -1,6 +1,14 @@
 <?php
 /**
  * BLOOMINOUS - Customer Profile (Firebase Spoke)
+ *
+ * Data flow:
+ *   customers/{id}                 -> name, email, member-since, loyalty points
+ *   orders where user_id == {id}   -> ledger rows + LIFETIME INVESTMENT
+ *
+ * Lifetime Investment = the sum of this customer's SUCCESSFUL orders only
+ * (completed / delivered / confirmed). Pending, processing, in-transit and
+ * cancelled orders are listed in the ledger but are NOT counted.
  */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -23,38 +31,75 @@ include 'templates/header.php';
 ?>
 
 <style>
+    /* All colours come from the shared theme variables (header.php), so this
+       page follows light / dark mode automatically. Amber = var(--primary). */
     .profile-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
-    .back-btn { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--primary); font-weight: 800; margin-bottom: 2.5rem; transition: 0.3s; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 2px; }
+    .back-btn { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--primary); font-weight: 800; margin-bottom: 2rem; transition: 0.3s; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 2px; }
     .back-btn:hover { transform: translateX(-5px); filter: brightness(1.2); }
     .back-btn i { font-size: 1rem; }
 
-    .profile-grid { display: grid; grid-template-columns: 400px 1fr; gap: 2.5rem; }
+    /* minmax(0, 1fr) lets the right column shrink instead of pushing the page wider */
+    .profile-grid { display: grid; grid-template-columns: minmax(280px, 400px) minmax(0, 1fr); gap: 2rem; align-items: start; }
 
-    .info-card { background: #fff; border-radius: 35px; padding: 4rem 2.5rem; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.02); height: fit-content; border: 1px solid #f0f0f0; position: relative; overflow: hidden; }
-    .avatar-circle { width: 140px; height: 140px; background: #fff5f8; color: var(--primary); border-radius: 45px; display: flex; align-items: center; justify-content: center; margin: 0 auto 2.5rem; font-size: 4rem; font-weight: 900; border: 1px solid rgba(233, 30, 99, 0.1); font-family: 'Cormorant Garamond', serif; transition: 0.4s; }
-    .info-card:hover .avatar-circle { transform: scale(1.05) rotate(-3deg); box-shadow: 0 15px 35px rgba(233, 30, 99, 0.1); }
+    .info-card { background: var(--surface); border-radius: 35px; padding: 3rem 2rem; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.04); height: fit-content; border: 1px solid var(--border-color); position: relative; overflow: hidden; }
+    .avatar-circle { width: 140px; height: 140px; background: rgba(245, 158, 11, 0.14); color: var(--primary); border-radius: 45px; display: flex; align-items: center; justify-content: center; margin: 0 auto 2rem; font-size: 4rem; font-weight: 900; border: 1px solid rgba(245, 158, 11, 0.35); font-family: 'Cormorant Garamond', serif; transition: 0.4s; }
+    .info-card:hover .avatar-circle { transform: scale(1.05) rotate(-3deg); box-shadow: 0 15px 35px rgba(245, 158, 11, 0.18); }
+    .profile-name { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.15; font-weight: 900; color: var(--text-main); margin-bottom: 0.5rem; overflow-wrap: anywhere; }
+    .profile-email { color: var(--text-light); font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 2rem; overflow-wrap: anywhere; }
 
-    .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2.5rem; }
-    .stat-box { background: #fff; padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; transition: 0.4s; }
-    .stat-box:hover { transform: translateY(-5px); box-shadow: 0 15px 35px rgba(0,0,0,0.05); }
+    .stats-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+    .stat-box { background: var(--surface); padding: 2rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); border: 1px solid var(--border-color); transition: 0.4s; min-width: 0; }
+    .stat-box:hover { transform: translateY(-5px); box-shadow: 0 15px 35px rgba(0,0,0,0.12); }
+    .stat-label { font-size: 0.65rem; font-weight: 900; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 0.5rem; }
+    .stat-value { font-family: 'Cormorant Garamond', serif; font-weight: 900; line-height: 1.1; font-size: clamp(1.9rem, 4vw, 3rem); color: var(--text-main); overflow-wrap: anywhere; }
+    .stat-value.accent { color: var(--primary); }
+    .stat-sub { margin-top: 0.5rem; font-size: 0.7rem; font-weight: 700; color: var(--text-light); }
 
-    .history-card { background: #fff; border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid #f0f0f0; overflow: hidden; }
-    .table-container { padding: 0; }
-    .order-table { width: 100%; border-collapse: collapse; }
-    .order-table th { text-align: left; padding: 25px 20px; color: var(--text-light); border-bottom: 1px solid #f0f0f0; text-transform: uppercase; font-size: 0.7rem; font-weight: 800; letter-spacing: 1.5px; background: #fafafa; }
-    .order-table td { padding: 20px; border-bottom: 1px solid #f8f9fa; font-size: 0.9rem; color: var(--text-main); font-weight: 600; }
-    tr:hover td { background: #fafafa; }
+    .history-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.04); border: 1px solid var(--border-color); overflow: hidden; }
+    .history-head { padding: 2rem; background: var(--surface-alt); }
+    .history-head h4 { font-size: 1.5rem; font-weight: 900; color: var(--text-main); }
+    .history-head p { color: var(--text-light); font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 0.25rem; }
+    .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .order-table { width: 100%; border-collapse: collapse; min-width: 420px; }
+    .order-table th { text-align: left; padding: 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color); border-top: 1px solid var(--border-color); text-transform: uppercase; font-size: 0.7rem; font-weight: 800; letter-spacing: 1.5px; background: var(--surface-alt); white-space: nowrap; }
+    .order-table td { padding: 18px 20px; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; color: var(--text-main); font-weight: 600; }
+    .order-table tbody tr:hover td { background: var(--surface-alt); }
+    .order-table td.muted { color: var(--text-light); font-weight: 500; }
+    .order-table td.amount { font-weight: 800; white-space: nowrap; }
+    .order-table td.amount.not-counted { color: var(--text-light); font-weight: 600; }
+    .order-table td.amount.void { text-decoration: line-through; }
+    .empty-row { text-align: center; padding: 50px 20px !important; color: var(--text-light); font-style: italic; font-weight: 500; }
+    .empty-row i { display: block; font-size: 2rem; margin-bottom: 10px; opacity: 0.35; font-style: normal; }
 
-    .badge-status { padding: 6px 16px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
-    .status-completed { background: rgba(46, 204, 113, 0.1); color: #2ecc71; }
-    .status-pending { background: #fff9e6; color: #f39c12; }
-    .status-cancelled { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
+    .badge-status { display: inline-block; padding: 6px 16px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }
+    .status-success   { background: rgba(34, 197, 94, 0.14);  color: #22c55e; }
+    .status-pending   { background: rgba(245, 158, 11, 0.16); color: #f59e0b; }
+    .status-cancelled { background: rgba(239, 68, 68, 0.14);  color: #ef4444; }
 
-    .meta-box { text-align: left; background: #fafafa; padding: 2rem; border-radius: 25px; border: 1px solid #f0f0f0; margin-top: 2rem; }
-    .meta-item { display: flex; flex-direction: column; gap: 5px; margin-bottom: 1.5rem; }
+    .meta-box { text-align: left; background: var(--surface-alt); padding: 1.5rem; border-radius: 25px; border: 1px solid var(--border-color); margin-top: 1.5rem; }
+    .meta-item { display: flex; flex-direction: column; gap: 5px; margin-bottom: 1.25rem; }
     .meta-item:last-child { margin-bottom: 0; }
-    .meta-label { font-size: 0.65rem; font-weight: 800; color: #ccc; text-transform: uppercase; letter-spacing: 1.5px; }
+    .meta-label { font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; }
     .meta-value { font-size: 0.85rem; font-weight: 700; color: var(--text-main); }
+
+    /* ---------- Responsive ---------- */
+    /* Tablets: stack the profile card on top of the stats + ledger */
+    @media (max-width: 1024px) {
+        .profile-grid { grid-template-columns: minmax(0, 1fr); }
+        .info-card { padding: 2rem 1.5rem; }
+        .avatar-circle { width: 110px; height: 110px; font-size: 3rem; border-radius: 35px; }
+    }
+    /* Phones: single column stats, tighter paddings, smaller corners */
+    @media (max-width: 640px) {
+        .profile-content { padding: 1rem; }
+        .stats-row { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+        .stat-box { padding: 1.5rem; border-radius: 28px; }
+        .info-card, .history-card { border-radius: 28px; }
+        .history-head { padding: 1.5rem; }
+        .order-table th, .order-table td { padding: 14px 14px; }
+        .hide-sm { display: none; }
+        .order-table { min-width: 0; }
+    }
 </style>
 
 <main class="profile-content">
@@ -66,8 +111,8 @@ include 'templates/header.php';
         <!-- LEFT COLUMN: USER INFO -->
         <div class="info-card" id="customerInfo">
             <div class="avatar-circle" id="avatar">?</div>
-            <h2 class="brand-font text-4xl font-black text-gray-800 mb-2" id="username">Loading...</h2>
-            <p class="text-gray-400 font-bold text-xs uppercase tracking-widest mb-10" id="email">...</p>
+            <h2 class="brand-font profile-name" id="username">Loading...</h2>
+            <p class="profile-email" id="email">...</p>
 
             <div class="meta-box">
                 <div class="meta-item">
@@ -87,21 +132,21 @@ include 'templates/header.php';
         <div class="main-details">
             <div class="stats-row">
                 <div class="stat-box">
-                    <p class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Loyalty Currency</p>
-                    <h2 class="brand-font text-5xl font-black text-pink-500 mb-0" id="totalPoints">0</h2>
+                    <p class="stat-label">Loyalty Currency</p>
+                    <h2 class="stat-value accent" id="totalPoints">0</h2>
+                    <p class="stat-sub">Current points balance</p>
                 </div>
                 <div class="stat-box">
-                    <p class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Lifetime Investment</p>
-                    <h2 class="brand-font text-5xl font-black text-gray-800 mb-0" id="totalSpend">₱0.00</h2>
+                    <p class="stat-label">Lifetime Investment</p>
+                    <h2 class="stat-value" id="totalSpend">₱0.00</h2>
+                    <p class="stat-sub" id="spendSub">Successful orders only</p>
                 </div>
             </div>
 
             <div class="history-card">
-                <div class="flex justify-between items-center p-8 border-bottom border-gray-100 bg-gray-50/30">
-                    <div>
-                        <h4 class="brand-font text-2xl font-black text-gray-800">Order Ledger</h4>
-                        <p class="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">Historical Transaction Telemetry</p>
-                    </div>
+                <div class="history-head">
+                    <h4 class="brand-font">Order Ledger</h4>
+                    <p>Historical Transaction Telemetry</p>
                 </div>
 
                 <div class="table-container">
@@ -109,12 +154,13 @@ include 'templates/header.php';
                         <thead>
                             <tr>
                                 <th>Telemetry Date</th>
+                                <th class="hide-sm">Order</th>
                                 <th>Valuation</th>
                                 <th style="text-align: right;">Status</th>
                             </tr>
                         </thead>
                         <tbody id="orderHistoryData">
-                            <tr><td colspan='3' style='text-align: center; padding: 80px;' class="text-gray-300 italic font-medium">Synchronizing transaction logs...</td></tr>
+                            <tr><td colspan="4" class="empty-row">Synchronizing transaction logs...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -124,10 +170,34 @@ include 'templates/header.php';
 </main>
 
 <script>
-    const customerId = "<?php echo $c_id; ?>";
+    // json_encode = safe quoting, so a crafted ?id= can't inject script.
+    const customerId = <?php echo json_encode((string)$c_id); ?>;
+
+    // Statuses that count as a SUCCESSFUL order (compared in lower case,
+    // because the app writes 'COMPLETED' and the website writes 'completed').
+    const SUCCESS_STATUSES = ['completed', 'delivered', 'confirmed'];
+
+    const peso = (n) => '₱' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // Escapes text before it goes into innerHTML.
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+    // Accepts a Firestore Timestamp, a Date, a number or a text date.
+    function toJsDate(v) {
+        if (!v) return null;
+        if (typeof v.toDate === 'function') return v.toDate();
+        const d = new Date(v);
+        return isNaN(d) ? null : d;
+    }
+
+    function orderStatusClass(status) {
+        if (SUCCESS_STATUSES.includes(status)) return 'status-success';
+        if (status === 'cancelled') return 'status-cancelled';
+        return 'status-pending'; // pending, processing, in transit, ...
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
-        // Load Customer Details
+        // ---- 1. Customer details (name, email, since, points) ----
         db.collection('customers').doc(customerId).onSnapshot(doc => {
             if (!doc.exists) {
                 alert('Customer not found!');
@@ -139,38 +209,81 @@ include 'templates/header.php';
             document.getElementById('username').innerText = displayName;
             document.getElementById('email').innerText = c.email || 'N/A';
             document.getElementById('avatar').innerText = displayName.charAt(0).toUpperCase();
-            document.getElementById('customerId').innerText = doc.id;
-            
-            const since = c.lastLogin ? c.lastLogin.toDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : (c.created_at ? c.created_at.toDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A');
-            document.getElementById('memberSince').innerText = since;
-            
-            document.getElementById('totalPoints').innerText = (c.points || 0).toLocaleString();
-            document.getElementById('totalSpend').innerText = '₱' + (c.total_spend || 0).toLocaleString(undefined, {minimumFractionDigits: 2});
+
+            const sinceDate = toJsDate(c.lastLogin) || toJsDate(c.created_at);
+            document.getElementById('memberSince').innerText = sinceDate
+                ? sinceDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                : 'N/A';
+
+            // Points are a live balance (the app deducts them when the
+            // customer redeems a reward), so they stay as stored.
+            document.getElementById('totalPoints').innerText = Number(c.points || 0).toLocaleString();
+        }, err => {
+            console.error('Customer load failed:', err);
+            document.getElementById('username').innerText = 'Could not load customer';
         });
 
-        // Load Order History in Real-time
-        db.collection('orders').where('user_id', '==', customerId).orderBy('timestamp', 'desc').onSnapshot(snap => {
+        // ---- 2. Orders: ledger + Lifetime Investment ----
+        // No orderBy() here on purpose: combining where() with orderBy() on a
+        // different field needs a composite index, and without it the query
+        // fails silently (the old "Synchronizing..." that never finished).
+        // We sort in the browser instead.
+        db.collection('orders').where('user_id', '==', customerId).onSnapshot(snap => {
+            const body = document.getElementById('orderHistoryData');
+
             if (snap.empty) {
-                document.getElementById('orderHistoryData').innerHTML = "<tr><td colspan='3' style='text-align: center; padding: 50px; color: #b2bec3;'><i class='fa-solid fa-box-open' style='display:block; font-size: 2rem; margin-bottom: 10px; opacity: 0.3;'></i>No purchase history found.</td></tr>";
+                body.innerHTML = "<tr><td colspan='4' class='empty-row'><i class='fa-solid fa-box-open'></i>No purchase history found.</td></tr>";
+                document.getElementById('totalSpend').innerText = peso(0);
+                document.getElementById('spendSub').innerText = '0 successful orders';
                 return;
             }
 
-            let html = '';
-            snap.forEach(doc => {
-                const o = doc.data();
-                const date = o.timestamp ? o.timestamp.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
-                const status = (o.status || 'Completed').toLowerCase();
-                const statusClass = status === 'completed' ? 'status-completed' : (status === 'cancelled' ? 'status-cancelled' : 'status-pending');
-
-                html += `
-                <tr style="transition: 0.2s;">
-                    <td style="color: #7d8da1; font-weight: 500;">${date}</td>
-                    <td style="font-weight: 800; color: #363949;">₱${parseFloat(o.total_price || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                    <td style="text-align: right;"><span class="badge-status ${statusClass}">${status}</span></td>
-                </tr>
-                `;
+            // Turn each Firestore doc into a plain object we can sort / total.
+            const orders = snap.docs.map(d => {
+                const o = d.data();
+                return {
+                    id: d.id,
+                    date: toJsDate(o.createdAt) || toJsDate(o.timestamp) || toJsDate(o.created_at),
+                    total: parseFloat(o.total_price ?? o.totalAmount ?? o.total_amount ?? 0) || 0,
+                    status: String(o.status || 'pending').trim().toLowerCase(),
+                    ref: o.invoiceId || o.invoice_id || d.id.substring(0, 8).toUpperCase()
+                };
             });
-            document.getElementById('orderHistoryData').innerHTML = html;
+
+            // Newest first; rows with no date sink to the bottom.
+            orders.sort((a, b) => (b.date ? b.date.getTime() : 0) - (a.date ? a.date.getTime() : 0));
+
+            // Lifetime Investment = total of the SUCCESSFUL orders only.
+            let spend = 0, successCount = 0;
+            orders.forEach(o => {
+                if (SUCCESS_STATUSES.includes(o.status)) {
+                    spend += o.total;
+                    successCount++;
+                }
+            });
+            document.getElementById('totalSpend').innerText = peso(spend);
+            document.getElementById('spendSub').innerText =
+                successCount + ' successful order' + (successCount === 1 ? '' : 's');
+
+            body.innerHTML = orders.map(o => {
+                const dateText = o.date
+                    ? o.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'N/A';
+                const counted = SUCCESS_STATUSES.includes(o.status);
+                const amountClass = 'amount' + (counted ? '' : ' not-counted') + (o.status === 'cancelled' ? ' void' : '');
+                return `
+                <tr>
+                    <td class="muted">${esc(dateText)}</td>
+                    <td class="muted hide-sm">#${esc(o.ref)}</td>
+                    <td class="${amountClass}">${peso(o.total)}</td>
+                    <td style="text-align: right;"><span class="badge-status ${orderStatusClass(o.status)}">${esc(o.status)}</span></td>
+                </tr>`;
+            }).join('');
+        }, err => {
+            // Without this, a failed query left the page stuck on "Synchronizing...".
+            console.error('Order history failed:', err);
+            document.getElementById('orderHistoryData').innerHTML =
+                "<tr><td colspan='4' class='empty-row'><i class='fa-solid fa-triangle-exclamation'></i>Could not load order history.<br><small>" + esc(err.code || err.message) + "</small></td></tr>";
         });
     });
 </script>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Makes the page fit phone screens instead of looking tiny -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download BLOOM</title>
+
+    <!-- Same fonts as the web login page -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800;900&family=Cormorant+Garamond:wght@700;900&display=swap" rel="stylesheet">
+
+    <style>
+        /* Same color tokens as index.php (login page) */
+        :root {
+            --primary: #F59E0B;
+            --secondary: #121212;
+            --background: #FFFDF7;
+            --dark: #121212;
+            --text-main: #363949;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--background);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        /* The white card, identical in look to .login-container */
+        .download-container {
+            background: #ffffff;
+            padding: 4rem;
+            border-radius: 40px;
+            box-shadow: 0 40px 100px rgba(245, 158, 11, 0.06);
+            width: 100%;
+            max-width: 480px;
+            text-align: center;
+            border: 1px solid rgba(245, 158, 11, 0.03);
+            margin: 2rem;
+            position: relative;
+            overflow: hidden; /* keeps the blurred blobs inside the card */
+        }
+
+        .brand-name {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 3rem;
+            font-weight: 900;
+            letter-spacing: 6px;
+            color: var(--primary);
+            margin-bottom: 2rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        h2 {
+            font-family: 'Cormorant Garamond', serif;
+            color: var(--dark);
+            font-size: 2.5rem;
+            margin: 0 0 0.5rem;
+            font-weight: 900;
+            line-height: 1.1;
+            position: relative;
+            z-index: 2;
+        }
+
+        p.subtitle {
+            color: #aaa;
+            font-size: 0.9rem;
+            margin: 0 0 2.5rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Download button, same style as the login button */
+        .btn-download {
+            display: block;
+            width: 100%;
+            padding: 1.2rem;
+            background: var(--primary);
+            color: #ffffff;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            text-decoration: none;
+            box-shadow: 0 15px 35px rgba(245, 158, 11, 0.2);
+            transition: 0.4s;
+            position: relative;
+            z-index: 2;
+        }
+        .btn-download:hover {
+            background: #d97706;
+            transform: translateY(-5px);
+            box-shadow: 0 20px 45px rgba(217, 119, 6, 0.3);
+        }
+
+        .meta {
+            font-size: 0.75rem;
+            color: #bbb;
+            font-weight: 600;
+            margin-top: 1.2rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Install instructions box */
+        .steps {
+            text-align: left;
+            background: #fafafa;
+            border: 1px solid #f0f0f0;
+            border-radius: 20px;
+            padding: 1.5rem 1.5rem 1.5rem 2.8rem;
+            margin: 2.5rem 0 0;
+            font-size: 0.85rem;
+            font-weight: 500;
+            line-height: 1.7;
+            position: relative;
+            z-index: 2;
+        }
+        .steps h3 {
+            margin: 0 0 0.8rem -1.3rem;
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--primary);
+        }
+        .steps li { margin-bottom: 0.4rem; }
+        .steps b { color: var(--dark); }
+
+        .about {
+            margin-top: 2.5rem;
+            font-size: 0.75rem;
+            color: #bbb;
+            font-weight: 600;
+            line-height: 1.7;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Soft blurred glow circles, same as the login page */
+        .blob {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: var(--primary);
+            opacity: 0.03;
+            filter: blur(80px);
+            border-radius: 50%;
+            z-index: 1;
+        }
+        .blob-1 { top: -150px; right: -150px; }
+        .blob-2 { bottom: -150px; left: -150px; }
+
+        /* Smaller padding on phones */
+        @media (max-width: 480px) {
+            .download-container { padding: 2.5rem 1.5rem; margin: 1rem; }
+            .brand-name { font-size: 2.4rem; }
+            h2 { font-size: 2rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="download-container">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+
+        <div class="brand-name">BLOOM</div>
+        <h2>Get the App</h2>
+        <p class="subtitle">Android Download</p>
+
+        <!-- Link to the APK sitting in the same folder as this page -->
+        <a class="btn-download" href="bloominous.apk" download="bloominous.apk">Download App</a>
+        <p class="meta">Android only &bull; Version 1.0</p>
+
+        <ol class="steps">
+            <h3>How to install</h3>
+            <li>Tap <b>Download App</b> and wait for the file to finish.</li>
+            <li>Open the downloaded file.</li>
+            <li>If Android blocks it, tap <b>Settings</b> and turn on <b>Allow from this source</b>.</li>
+            <li>Go back and tap <b>Install</b>.</li>
+        </ol>
+
+        <p class="about">
+            Android shows this notice for every app installed outside the Play Store.<br>
+            Made by [Your Shop / Team Name]<br>
+            Questions? [your email or phone number]
+        </p>
+    </div>
+</body>
+</html>

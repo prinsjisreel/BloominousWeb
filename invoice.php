@@ -83,8 +83,13 @@ include 'templates/header.php';
     .badge-pending { background: #fff9e6; color: #f39c12; }
     .badge-voided, .badge-refunded, .badge-partially-refunded { background: #f2f2f2; color: #888; }
     .badge-voided { text-decoration: line-through; }
+    .badge-cancelled { background: rgba(239, 68, 68, 0.14); color: #dc2626; }
     .badge-channel-pos { background: rgba(123, 121, 242, 0.12); color: #7B79F2; }
     .badge-channel-web { background: rgba(245, 158, 11, 0.12); color: #d97706; }
+
+    /* Red strip shown only on cancelled invoices. The receipt is always "paper"
+       (white), so these colours are fixed and work in both themes. */
+    .cancel-banner { display: none; align-items: center; gap: 10px; margin-bottom: 2rem; padding: 14px 18px; border-radius: 16px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); color: #dc2626; font-weight: 800; font-size: 0.82rem; position: relative; z-index: 2; }
 
     .inv-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2.5rem; }
     .info-label { color: #b5b5b5; font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
@@ -159,6 +164,11 @@ include 'templates/header.php';
                     <span class="badge" id="invStatusBadge">—</span>
                 </div>
             </div>
+        </div>
+
+        <div class="cancel-banner" id="cancelBanner">
+            <i class="fa-solid fa-ban"></i>
+            <span id="cancelBannerText">This order was cancelled.</span>
         </div>
 
         <div class="inv-meta-grid">
@@ -265,8 +275,15 @@ include 'templates/header.php';
             const o = doc.data();
             const walkIn = isWalkIn(o);
 
-            // Same fallback as invoice_portal.php, so the badge always matches the list.
-            const paymentStatus = o.paymentStatus || (o.status === 'cancelled' ? 'Voided' : (o.status === 'completed' || o.status === 'delivered' ? 'Paid' : 'Pending'));
+            // Same rule as invoice_portal.php, so the badge always matches the list.
+            // A cancelled order is labelled "Cancelled" (its paymentStatus alone would
+            // still say "Pending"), unless it already has a final money state.
+            const statusText = String(o.status || '').toLowerCase();
+            const finalStates = ['Voided', 'Refunded', 'Partially Refunded'];
+            const isCancelled = (statusText === 'cancelled' || statusText === 'canceled') && !finalStates.includes(o.paymentStatus);
+            const paymentStatus = isCancelled
+                ? 'Cancelled'
+                : (o.paymentStatus || (o.status === 'completed' || o.status === 'delivered' ? 'Paid' : 'Pending'));
             const channel = walkIn ? 'Walk-In' : 'Online';
 
             currentInvoiceId = o.invoiceId || o.orderId || o.order_id || orderId;
@@ -327,14 +344,25 @@ include 'templates/header.php';
 
             document.getElementById('invTotal').innerText = peso(o.total_price ?? o.total_amount ?? o.totalAmount ?? subtotal);
 
-            // Watermark for voided / refunded invoices
+            // Watermark for voided / refunded / cancelled invoices (it also shows in Print and PDF)
             const wm = document.getElementById('invoiceWatermark');
-            if (['Voided', 'Refunded'].includes(paymentStatus)) {
+            if (['Voided', 'Refunded', 'Cancelled'].includes(paymentStatus)) {
                 wm.innerText = paymentStatus.toUpperCase();
                 wm.className = 'watermark';
             } else {
                 wm.innerText = '';
                 wm.className = '';
+            }
+
+            // Red banner with the cancel date, and a refund warning if it had been paid.
+            const cancelBanner = document.getElementById('cancelBanner');
+            if (isCancelled) {
+                const when = o.cancelledAt ? ' on ' + formatDateTime(o.cancelledAt) : '';
+                const paidNote = o.paymentStatus === 'Paid' ? ' Payment had already been received - check whether a refund is needed.' : '';
+                document.getElementById('cancelBannerText').innerText = 'This order was cancelled' + when + '.' + paidNote;
+                cancelBanner.style.display = 'flex';
+            } else {
+                cancelBanner.style.display = 'none';
             }
 
             document.getElementById('lockNote').style.display = o.locked ? 'inline-flex' : 'none';

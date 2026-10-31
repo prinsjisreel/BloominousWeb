@@ -1,0 +1,119 @@
+﻿{
+    "email":  "prinsqtpotato@gmail.com",
+    "savedAt":  "2026-10-29T14:42:38.9657100Z",
+    "uid":  "sydzl6KWBpas7QO5xuKY5kV5iKk1",
+    "fields":  {
+                   "restrictedUntil":  {
+                                           "timestampValue":  "2026-11-20T00:51:11Z"
+                                       },
+                   "riskScore":  {
+                                     "integerValue":  "59"
+                                 },
+                   "fraudCategories":  {
+                                           "arrayValue":  {
+                                                              "values":  [
+                                                                             {
+                                                                                 "stringValue":  "fake_transaction"
+                                                                             },
+                                                                             {
+                                                                                 "stringValue":  "payment_fraud"
+                                                                             },
+                                                                             {
+                                                                                 "stringValue":  "account_takeover"
+                                                                             }
+                                                                         ]
+                                                          }
+                                       },
+                   "riskLevel":  {
+                                     "stringValue":  "critical"
+                                 },
+                   "fraudCodes":  {
+                                      "arrayValue":  {
+                                                         "values":  [
+                                                                        {
+                                                                            "stringValue":  "velocity_repeat"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "history_amount_deviation"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "velocity_rapid"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "banned_device"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "phone_disposable_voip"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "ip_vpn_proxy"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "phone_reuse"
+                                                                        }
+                                                                    ]
+                                                     }
+                                  },
+                   "isRestricted":  {
+                                        "booleanValue":  false
+                                    },
+                   "fraudFlags":  {
+                                      "arrayValue":  {
+                                                         "values":  [
+                                                                        {
+                                                                            "stringValue":  "Repeat checkout within a 5-minute window"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order total P1,392.74 is above this customer\u0027s usual spending range (average P404.85 + 2 standard deviations = P1,013.81, from 3 orders in the last 60 days)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order total P5,082.74 is above this customer\u0027s usual spending range (average P651.82 + 2 standard deviations = P1,757.78, from 4 orders in the last 60 days)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Multiple rapid checkouts flagged (2 prior orders in under 5 minutes)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Multiple rapid checkouts flagged (3 prior orders in under 5 minutes)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Reviewed by admin: false alarm"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order placed from a previously banned device"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Disposable/VOIP phone number used at checkout"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Order total P5,000.00 is above this customer\u0027s usual spending range (average P800.00 + 2 standard deviations = P2,000.00, from 4 orders in the last 60 days)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "VPN/Proxy detected"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "TEST: restriction forced by Test-Restrict.ps1 (not a real fraud case)"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Restriction lifted by admin after appeal"
+                                                                        },
+                                                                        {
+                                                                            "stringValue":  "Phone number already associated with a different account"
+                                                                        }
+                                                                    ]
+                                                     }
+                                  },
+                   "lastFraudActivityAt":  {
+                                               "timestampValue":  "2026-10-28T01:58:58Z"
+                                           }
+               },
+    "touchedFields":  [
+                          "riskScore",
+                          "riskLevel",
+                          "fraudCodes",
+                          "fraudCategories",
+                          "fraudFlags",
+                          "lastFraudActivityAt",
+                          "isRestricted",
+                          "restrictedUntil"
+                      ]
+}

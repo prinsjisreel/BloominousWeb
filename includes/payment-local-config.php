@@ -25,8 +25,8 @@ putenv('PAYMONGO_SECRET_KEY=sk_test_u26zru8XDoaAjZLLA1YjU9rA');
 // Returned by PayMongo when you register the webhook (starts with whsk_).
 // Not needed for local testing — PayMongo can't reach localhost anyway, so
 // templates/success.php confirms payments locally instead.
-putenv('PAYMONGO_WEBHOOK_SECRET=whsk_REPLACE_LATER');
+putenv('PAYMONGO_WEBHOOK_SECRET=whsk_yFSYDAH7jwN2EcvdWN4momrp');
 
 // Where PayMongo sends the customer back after paying (no trailing slash).
 // Local: http://localhost/BLOOM   |   Hostinger: https://your-domain.com
-putenv('APP_URL=http://localhost/BLOOM');
+putenv('APP_URL=https://honeydew-duck-132160.hostingersite.com');

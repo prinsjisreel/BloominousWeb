@@ -108,6 +108,10 @@ if ($user_role === 'delivery') {
     </script>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- NEW: global dark-mode overrides for admin pages (cards, tables, tabs, popups).
+         The ?v= number is the file's last-saved time, so the browser can never serve
+         a stale cached copy after you edit it. Only takes effect when <html data-theme="dark">. -->
+    <link rel="stylesheet" href="assets/css/bloom-dark.css?v=<?php echo @filemtime(__DIR__ . '/../assets/css/bloom-dark.css') ?: 1; ?>">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- Firebase SDK -->
@@ -449,10 +453,6 @@ if ($user_role === 'delivery') {
         <a href="sales_anomalies.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'sales_anomalies.php' ? 'active' : ''; ?>">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <span>Sales Anomalies</span>
-        </a>
-        <a href="override_codes.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'override_codes.php' ? 'active' : ''; ?>">
-            <i class="fa-solid fa-key"></i>
-            <span>Override Codes</span>
         </a>
 
          <a href="admin_activity_log.php" class="sidebar-link <?php echo basename($_SERVER['PHP_SELF']) == 'admin_activity_log.php' ? 'active' : ''; ?>">

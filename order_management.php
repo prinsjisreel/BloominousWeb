@@ -1,6 +1,21 @@
 <?php   
 /**
  * BLOOMINOUS - Order Management (Firebase Spoke)
+ *
+ * Status changes are step-by-step BUTTONS instead of a dropdown, so an order
+ * can never jump over a stage (e.g. Pending straight to Confirmed).
+ *
+ *   Online  : Pending -> Processing -> Prepared -> In Transit -> Confirmed (needs POD photo)
+ *   Walk-in : Pending -> Processing -> Prepared -> Confirmed
+ *             (+ a separate Cancel button, any time before Confirmed)
+ *
+ * Every step is written through a Firestore transaction that re-checks the order's
+ * CURRENT status first, so two staff clicking at once (or a stale tab) can't skip
+ * or double-apply a step.
+ *
+ * THEME: light mode uses the theme variables from templates/header.php. Dark mode
+ * has its own explicit block at the bottom of the <style> using the same palette
+ * header.php defines, so the cards can never fall back to white.
  */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -17,100 +32,139 @@ include 'templates/header.php';
 <style>
     .order-content { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
     .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-    .stat-card { background: var(--surface); padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-color); }
+    .stat-card { background: var(--surface, #fff); padding: 2.5rem; border-radius: 35px; box-shadow: 0 10px 30px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-color, #f0f0f0); }
+    .stat-card h3 { color: var(--text-main, #363949); }
     .stat-card i { font-size: 1.5rem; width: 65px; height: 65px; border-radius: 20px; display: flex; align-items: center; justify-content: center; }
     .pink-bg { background: rgba(233, 30, 99, 0.1); color: var(--primary); }
     .indigo-bg { background: rgba(123, 121, 242, 0.1); color: var(--secondary); }
     .teal-bg { background: rgba(0, 206, 209, 0.1); color: #00ced1; }
-    .list-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
+    .list-card { background: var(--surface, #fff); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color, #f0f0f0); overflow: hidden; }
     #orderTable { width: 100%; border-collapse: collapse; }
-    #orderTable th { text-align: left; padding: 25px 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; background: var(--surface-alt); }
-    #orderTable td { padding: 20px; border-bottom: 1px solid #f8f9fa; color: var(--text-main); font-size: 0.9rem; font-weight: 500; }
-    .customer-avatar { width: 45px; height: 45px; background: #fff5f8; color: var(--primary); border: 1px solid rgba(233, 30, 99, 0.1); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; font-family: 'Cormorant Garamond', serif; }
-    .status-select { padding: 10px 14px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; border: 1px solid var(--border-color); background: var(--surface-alt); outline: none; cursor: pointer; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; transition: 0.3s; }
-    .status-select:focus { border-color: var(--primary); background: var(--surface); }
-    /* "Touch-move" lock: a Confirmed / Cancelled order can't be changed any more */
-    .status-select:disabled { opacity: 0.65; cursor: not-allowed; }
-    .lock-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+    #orderTable th { text-align: left; padding: 25px 20px; color: var(--text-light); border-bottom: 1px solid var(--border-color, #f0f0f0); text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; background: var(--surface-alt, #fafafa); }
+    #orderTable td { padding: 20px; border-bottom: 1px solid var(--border-color, #f8f9fa); color: var(--text-main); font-size: 0.9rem; font-weight: 500; }
+    .customer-avatar { width: 45px; height: 45px; background: rgba(245, 158, 11, 0.12); color: var(--primary); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; font-family: 'Cormorant Garamond', serif; }
 
-    /* Reusable confirm / override-code dialog */
-    #bloomDialogOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 600; align-items: center; justify-content: center; padding: 20px; }
-    #bloomDialogOverlay.open { display: flex; }
-    #bloomDialog { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2.2rem; max-width: 440px; width: 100%; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
-    #bloomDialog h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0 0 0.6rem; color: var(--text-main); }
-    #bloomDialogMsg { color: var(--text-light); font-size: 0.85rem; font-weight: 600; line-height: 1.5; white-space: pre-line; }
-    #bloomDialogInputWrap { display: none; margin-top: 1.1rem; }
-    #bloomDialogInput { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 700; font-size: 0.95rem; letter-spacing: 2px; text-transform: uppercase; outline: none; }
-    #bloomDialogInput:focus { border-color: var(--primary); background: var(--surface); }
-    #bloomDialogError { display: none; margin-top: 10px; color: var(--primary); font-size: 0.8rem; font-weight: 700; }
-    #bloomDialog .dlg-actions { display: flex; gap: 12px; margin-top: 1.6rem; }
-    #bloomDialog .dlg-actions button { flex: 1; padding: 15px; border-radius: 18px; font-weight: 800; border: none; cursor: pointer; }
-    #bloomDialog .dlg-cancel { background: #f5f5f5; color: var(--text-light); }
-    #bloomDialog .dlg-ok { background: var(--primary); color: #fff; }
-    #bloomDialog .dlg-ok.safe { background: #16a34a; }
-
-    /* Online / Walk-in channel tabs */
+    /* Online / Walk-in channel tabs — this is the split the whole page pivots on now:
+       every query, stat, and status flow below is scoped to whichever tab is active. */
     .channel-tabs { display: flex; gap: 10px; margin-bottom: 2rem; }
-    .channel-tab { padding: 14px 28px; border-radius: 18px; border: 1px solid var(--border-color); background: var(--surface); font-weight: 800; font-size: 0.85rem; cursor: pointer; color: var(--text-light); transition: 0.2s; display: flex; align-items: center; gap: 10px; }
-    .channel-tab .count { background: #f5f5f5; color: var(--text-light); padding: 2px 10px; border-radius: 50px; font-size: 0.72rem; }
-    .channel-tab.active { border-color: var(--primary); background: rgba(233,30,99,0.06); color: var(--primary); }
+    .channel-tab { padding: 14px 28px; border-radius: 18px; border: 1px solid var(--border-color, #f0f0f0); background: var(--surface, #fff); font-weight: 800; font-size: 0.85rem; cursor: pointer; color: var(--text-light); transition: 0.2s; display: flex; align-items: center; gap: 10px; }
+    .channel-tab .count { background: var(--surface-alt, #f5f5f5); color: var(--text-light); padding: 2px 10px; border-radius: 50px; font-size: 0.72rem; }
+    .channel-tab.active { border-color: var(--primary); background: rgba(245, 158, 11, 0.1); color: var(--primary); }
     .channel-tab.active .count { background: var(--primary); color: #fff; }
 
+    /* --- Step-by-step status cell (replaces the old <select>) --- */
+    .status-cell { display: flex; flex-direction: column; gap: 10px; min-width: 210px; }
+    .status-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    .status-pill { padding: 6px 14px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }
+    .status-pending    { background: rgba(245, 158, 11, 0.14); color: #F59E0B; }
+    .status-processing { background: rgba(123, 121, 242, 0.16); color: #8b89f5; }
+    .status-prepared   { background: rgba(0, 206, 209, 0.14); color: #00c4c7; }
+    .status-in-transit { background: rgba(77, 163, 255, 0.16); color: #4da3ff; }
+    .status-confirmed  { background: rgba(46, 204, 113, 0.16); color: #2ecc71; }
+    .status-cancelled  { background: rgba(150, 150, 150, 0.18); color: #9a9a9a; text-decoration: line-through; }
+
+    /* Progress dots: one per stage in this channel's flow; filled = already reached */
+    .step-dots { display: flex; gap: 5px; align-items: center; }
+    .step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-color, #e5e5e5); }
+    .step-dot.done { background: var(--primary); }
+
+    .status-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn-next-step { padding: 10px 16px; border-radius: 12px; border: none; background: var(--primary); color: #fff; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: 0.2s; }
+    .btn-next-step:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .btn-cancel-order { padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(248, 113, 113, 0.45); background: transparent; color: #f87171; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; }
+    .btn-cancel-order:hover { background: rgba(248, 113, 113, 0.1); }
+    .btn-next-step:disabled, .btn-cancel-order:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .status-done-note { font-size: 0.68rem; font-weight: 700; color: var(--text-light); }
+
     /* Proof of Delivery capture modal (online order Confirm step) */
-    #podCaptureOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
+    #podCaptureOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
     #podCaptureOverlay.open { display: flex; }
-    #podCaptureModal { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2.5rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #podCaptureModal { background: var(--surface, #fff); color: var(--text-main); border: 1px solid var(--border-color, transparent); border-radius: 30px; padding: 2.5rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.25); }
     #podCaptureModal h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0 0 0.5rem; color: var(--text-main); }
     #podCaptureModal p.pod-sub { color: var(--text-light); font-size: 0.8rem; font-weight: 600; margin-bottom: 1.5rem; }
     .pod-field { margin-bottom: 1.1rem; }
-    .pod-field label { display: block; font-size: 0.65rem; font-weight: 800; color: #ccc; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
-    .pod-field input[type="text"] { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-main); font-weight: 600; font-size: 0.88rem; outline: none; }
-    .pod-field input[type="text"]:focus { border-color: var(--primary); background: var(--surface); }
+    .pod-field label { display: block; font-size: 0.65rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
+    .pod-field input[type="text"] { width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-color, #f0f0f0); background: var(--surface-alt, #fafafa); color: var(--text-main); font-weight: 600; font-size: 0.88rem; outline: none; }
+    .pod-field input[type="text"]:focus { border-color: var(--primary); }
     #podPreviewWrap { display: none; margin-top: 12px; text-align: center; }
-    #podPreviewImg { max-width: 100%; max-height: 220px; border-radius: 14px; border: 1px solid var(--border-color); }
-    .pod-drop { border: 2px dashed var(--border-color); border-radius: 18px; padding: 2rem; text-align: center; cursor: pointer; color: var(--text-light); font-weight: 700; font-size: 0.85rem; background: var(--surface-alt); }
+    #podPreviewImg { max-width: 100%; max-height: 220px; border-radius: 14px; border: 1px solid var(--border-color, #f0f0f0); }
+    .pod-drop { border: 2px dashed var(--border-color, #f0f0f0); border-radius: 18px; padding: 2rem; text-align: center; cursor: pointer; color: var(--text-light); font-weight: 700; font-size: 0.85rem; background: var(--surface-alt, #fafafa); }
     .pod-drop:hover { border-color: var(--primary); color: var(--primary); }
     #podCaptureError { color: var(--primary); font-size: 0.8rem; font-weight: 700; margin-bottom: 1rem; display: none; }
     .pod-actions { display: flex; gap: 12px; margin-top: 1.5rem; }
     .pod-actions button { flex: 1; padding: 16px; border-radius: 18px; font-weight: 800; border: none; cursor: pointer; }
-    .pod-cancel { background: #f5f5f5; color: var(--text-light); }
+    .pod-cancel { background: var(--surface-alt, #f5f5f5); color: var(--text-light); }
     .pod-confirm { background: var(--primary); color: #fff; }
 
-    /* Proof of Order viewer */
-    .proof-btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 12px; border: 1px solid rgba(233,30,99,0.25); background: rgba(233,30,99,0.06); color: var(--primary); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
-    .proof-btn:hover { background: var(--primary); color: #fff; }
-    .proof-none { font-size: 0.7rem; font-weight: 700; color: var(--text-light); font-style: italic; white-space: nowrap; }
-    #proofViewerOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.7); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
-    #proofViewerOverlay.open { display: flex; }
-    #proofViewerModal { background: var(--surface); color: var(--text-main); border-radius: 30px; padding: 2rem; max-width: 640px; width: 100%; max-height: 92vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.25); }
-    #proofViewerModal h3 { font-family: 'Cormorant Garamond', serif; font-weight: 900; font-size: 1.6rem; margin: 0; color: var(--text-main); }
-    .proof-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; gap: 12px; }
-    .proof-close { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--surface-alt); color: var(--text-light); cursor: pointer; flex-shrink: 0; }
-    .proof-img-wrap { background: #111; border-radius: 18px; overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 220px; }
-    #proofViewerImg { max-width: 100%; max-height: 60vh; display: block; }
-    #proofViewerImgError { display: none; color: #ccc; font-size: 0.8rem; font-weight: 700; padding: 2rem; text-align: center; }
-    .proof-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 1.2rem; }
-    .proof-meta div { background: var(--surface-alt); border-radius: 14px; padding: 12px 14px; }
-    .proof-meta label { display: block; font-size: 0.6rem; font-weight: 800; color: var(--text-light); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
-    .proof-meta span { font-size: 0.82rem; font-weight: 700; word-break: break-all; }
-    #proofClockWarning { display: none; margin-top: 1rem; padding: 12px 14px; border-radius: 14px; background: rgba(245,158,11,0.12); color: #b45309; font-size: 0.78rem; font-weight: 700; }
-    .proof-open-link { display: inline-block; margin-top: 1rem; font-size: 0.75rem; font-weight: 800; color: var(--primary); text-decoration: none; }
+    /* Tailwind classes used in the markup, re-pointed at the theme (both modes) */
+    .order-content .text-gray-800 { color: var(--text-main); }
+    .order-content .text-gray-400, .order-content .text-gray-300 { color: var(--text-light); }
+    .order-content .text-pink-600 { color: var(--primary); }          /* peso amounts -> brand amber */
+    .order-content .bg-white { background-color: var(--surface, #fff); color: var(--text-main); }
+    .order-content .border-gray-100, .order-content .border-gray-50 { border-color: var(--border-color, #f0f0f0); }
+    .order-content .bg-gray-50\/30 { background-color: var(--surface-alt, rgba(249, 250, 251, 0.3)); }
+    #orderSearch::placeholder { color: var(--text-light); }
 
-    /* ============ DARK MODE ============ */
-    html[data-theme="dark"] #orderTable td { border-bottom-color: var(--border-color); }
-    html[data-theme="dark"] .customer-avatar { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.2); }
-    html[data-theme="dark"] .channel-tab .count, html[data-theme="dark"] .pod-cancel, html[data-theme="dark"] #bloomDialog .dlg-cancel { background: var(--surface-alt); }
-    html[data-theme="dark"] #bloomDialog { box-shadow: none; border: 1px solid var(--border-color); }
-    html[data-theme="dark"] .pod-field label { color: var(--text-light); }
-    html[data-theme="dark"] .stat-card, html[data-theme="dark"] .list-card { box-shadow: none; }
-    html[data-theme="dark"] .status-select { color-scheme: dark; }
-    html[data-theme="dark"] #proofViewerModal { box-shadow: none; border: 1px solid var(--border-color); }
-    html[data-theme="dark"] #proofClockWarning { color: #fbbf24; }
-    html[data-theme="dark"] .order-content .text-gray-800 { color: var(--text-main); }
-    html[data-theme="dark"] .order-content .text-gray-400, html[data-theme="dark"] .order-content .text-gray-300 { color: var(--text-light); }
-    html[data-theme="dark"] .order-content .bg-white { background-color: var(--surface); }
-    html[data-theme="dark"] .order-content .border-gray-100, html[data-theme="dark"] .order-content .border-gray-50 { border-color: var(--border-color); }
-    html[data-theme="dark"] .order-content .bg-gray-50\/30 { background-color: var(--surface-alt); }
+    /* =====================================================================
+       DARK MODE — explicit and !important on purpose.
+       header.php puts data-theme="dark" on <html> and defines this exact palette
+       (#2A241D card, #221D17 alt, #3F382F border, #EAE6DF text, #A0998F muted).
+       Spelling the colors out here means no card, tab or button on this page can
+       ever stay white, even if a variable fails to resolve or another stylesheet
+       sets a background after this one.
+       ===================================================================== */
+    html[data-theme="dark"] .stat-card,
+    html[data-theme="dark"] .list-card,
+    html[data-theme="dark"] #podCaptureModal {
+        background: #2A241D !important;
+        border-color: #3F382F !important;
+        box-shadow: none !important;
+    }
+    html[data-theme="dark"] .stat-card h3,
+    html[data-theme="dark"] #podCaptureModal h3 { color: #EAE6DF !important; }
+    html[data-theme="dark"] #podCaptureModal { color: #EAE6DF !important; }
+
+    /* Table */
+    html[data-theme="dark"] .list-card .bg-gray-50\/30 { background: #221D17 !important; border-color: #3F382F !important; }
+    html[data-theme="dark"] #orderTable th { background: #221D17 !important; color: #A0998F !important; border-bottom-color: #3F382F !important; }
+    html[data-theme="dark"] #orderTable td { color: #EAE6DF !important; border-bottom-color: #3F382F !important; }
+    html[data-theme="dark"] #orderTable td .text-gray-400,
+    html[data-theme="dark"] #orderTable td.text-gray-400 { color: #A0998F !important; }
+
+    /* Heading + search */
+    html[data-theme="dark"] .order-content .text-gray-800 { color: #EAE6DF !important; }
+    html[data-theme="dark"] .order-content .text-gray-400,
+    html[data-theme="dark"] .order-content .text-gray-300 { color: #A0998F !important; }
+    html[data-theme="dark"] #orderSearch { background: #2A241D !important; border-color: #3F382F !important; color: #EAE6DF !important; box-shadow: none !important; }
+    html[data-theme="dark"] #orderSearch:focus { border-color: #F59E0B !important; }
+    html[data-theme="dark"] #orderSearch::placeholder { color: #A0998F !important; }
+
+    /* Channel tabs (the "card buttons") */
+    html[data-theme="dark"] .channel-tab:not(.active) { background: #2A241D !important; border-color: #3F382F !important; color: #A0998F !important; }
+    html[data-theme="dark"] .channel-tab:not(.active):hover { border-color: #F59E0B !important; color: #EAE6DF !important; }
+    html[data-theme="dark"] .channel-tab .count { background: #221D17 !important; color: #A0998F !important; }
+    html[data-theme="dark"] .channel-tab.active {
+        background: linear-gradient(rgba(245,158,11,0.14), rgba(245,158,11,0.14)), #2A241D !important;
+        border-color: #F59E0B !important;
+        color: #F59E0B !important;
+    }
+    html[data-theme="dark"] .channel-tab.active .count { background: #F59E0B !important; color: #fff !important; }
+
+    /* Step buttons, dots, notes */
+    html[data-theme="dark"] .step-dot { background: #3F382F !important; }
+    html[data-theme="dark"] .step-dot.done { background: #F59E0B !important; }
+    html[data-theme="dark"] .status-done-note { color: #A0998F !important; }
+    html[data-theme="dark"] .btn-cancel-order { color: #fca5a5 !important; border-color: rgba(248,113,113,0.45) !important; }
+
+    /* Delivery popup */
+    html[data-theme="dark"] #podCaptureModal p.pod-sub,
+    html[data-theme="dark"] .pod-field label { color: #A0998F !important; }
+    html[data-theme="dark"] .pod-field input[type="text"] { background: #221D17 !important; border-color: #3F382F !important; color: #EAE6DF !important; }
+    html[data-theme="dark"] .pod-drop { background: #221D17 !important; border-color: #3F382F !important; color: #A0998F !important; }
+    html[data-theme="dark"] .pod-drop:hover { border-color: #F59E0B !important; color: #F59E0B !important; }
+    html[data-theme="dark"] .pod-cancel { background: #221D17 !important; color: #A0998F !important; }
+    html[data-theme="dark"] #podPreviewImg { border-color: #3F382F !important; }
 </style>
 
 <main class="order-content">
@@ -172,8 +226,7 @@ include 'templates/header.php';
                         <th>Payload Summary</th>
                         <th>Valuation</th>
                         <th>Timeline</th>
-                        <th>Status Selection</th>
-                        <th id="proofHeader" style="display:none;">Proof of Order</th>
+                        <th>Fulfillment Step</th>
                     </tr>
                 </thead>
                 <tbody id="orderData">
@@ -183,22 +236,6 @@ include 'templates/header.php';
         </div>
     </div>
 </main>
-
-<!-- Reusable confirm / override-code dialog (used for walk-in Confirm + Cancel) -->
-<div id="bloomDialogOverlay">
-    <div id="bloomDialog">
-        <h3 id="bloomDialogTitle"></h3>
-        <p id="bloomDialogMsg"></p>
-        <div id="bloomDialogInputWrap">
-            <input type="text" id="bloomDialogInput" autocomplete="off" maxlength="32">
-        </div>
-        <div id="bloomDialogError"></div>
-        <div class="dlg-actions">
-            <button type="button" class="dlg-cancel" id="bloomDialogCancelBtn" onclick="closeBloomDialog(false)">Keep order</button>
-            <button type="button" class="dlg-ok" id="bloomDialogOkBtn" onclick="closeBloomDialog(true)">Confirm</button>
-        </div>
-    </div>
-</div>
 
 <div id="podCaptureOverlay">
     <div id="podCaptureModal">
@@ -234,62 +271,64 @@ include 'templates/header.php';
     </div>
 </div>
 
-<!-- Proof of Order viewer -->
-<div id="proofViewerOverlay" onclick="if (event.target === this) closeProofViewer()">
-    <div id="proofViewerModal">
-        <div class="proof-head">
-            <div>
-                <h3>Proof of Order</h3>
-                <p class="text-gray-400 text-xs font-bold mt-1" id="proofViewerOrderId"></p>
-            </div>
-            <button type="button" class="proof-close" onclick="closeProofViewer()" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-
-        <div class="proof-img-wrap">
-            <img id="proofViewerImg" src="" alt="Proof of order photo">
-            <div id="proofViewerImgError">The photo could not be loaded. It may have been removed, or the link has expired.</div>
-        </div>
-
-        <div class="proof-meta">
-            <div><label>Taken (device clock)</label><span id="proofCapturedAt">—</span></div>
-            <div><label>Uploaded (server clock)</label><span id="proofUploadedAt">—</span></div>
-            <div><label>Taken By</label><span id="proofCapturedBy">—</span></div>
-            <div><label>Order Total</label><span id="proofTotal">—</span></div>
-        </div>
-
-        <div id="proofClockWarning"></div>
-
-        <a id="proofOpenLink" class="proof-open-link" href="#" target="_blank" rel="noopener noreferrer">
-            <i class="fa-solid fa-up-right-from-square"></i> Open full-size in new tab
-        </a>
-    </div>
-</div>
-
 <script>
-    function isOnlineOrder(o) { return String(o.type || 'WEB').toUpperCase() !== 'POS'; }
+    // Online (type 'WEB', or missing type — legacy web orders) vs Walk-in (type 'POS').
+    // This single flag decides which status flow a row gets and which stat card
+    // numbers get computed, so it is checked in exactly one place.
+    function isOnlineOrder(o) { return (o.type || 'WEB') !== 'POS'; }
 
-    const PROOF_VIEWER_ROLES = ['super-admin'];
-    const canViewProof = PROOF_VIEWER_ROLES.includes(window.currentUserRole);
-
-    const proofByOrderId = {};
-
-    const ORDER_STATUS_OPTIONS = {
-        online: ['pending', 'processing', 'in transit'],
-        walkin: ['pending', 'processing', 'confirmed', 'cancelled']
+    // The ORDERED list of stages per channel. Position in the array = the step number.
+    // The "next" button always moves exactly one position forward, never more.
+    const STATUS_FLOW = {
+        online: ['pending', 'processing', 'prepared', 'in transit', 'confirmed'],
+        walkin: ['pending', 'processing', 'prepared', 'confirmed']
     };
-    const STATUS_LABELS = { 'pending': 'Pending', 'processing': 'Processing', 'in transit': 'In Transit', 'confirmed': 'Confirmed', 'cancelled': 'Cancelled' };
+    const STATUS_LABELS = {
+        'pending': 'Pending',
+        'processing': 'Processing',
+        'prepared': 'Prepared',
+        'in transit': 'In Transit',
+        'confirmed': 'Confirmed',
+        'cancelled': 'Cancelled'
+    };
+    // What the button SAYS for each destination stage (verb form, so staff know what clicking does).
+    const NEXT_ACTION_LABELS = {
+        'processing': { text: 'Start Processing', icon: 'fa-gears' },
+        'prepared':   { text: 'Mark Prepared',    icon: 'fa-box' },
+        'in transit': { text: 'Send Out',         icon: 'fa-truck-fast' },
+        'confirmed':  { text: 'Confirm',          icon: 'fa-circle-check' }
+    };
 
-    // Employees get this many walk-in cancellations per day (shared across the
-    // whole branch, same rule as the mobile app). The next one needs an
-    // admin-generated single-use override code.
-    const DAILY_CANCEL_LIMIT = 3;
-    const isStaffRole = !['admin', 'super-admin'].includes(window.currentUserRole);
-
-    let activeChannel = 'online'; 
+    let activeChannel = 'online'; // 'online' | 'walkin'
     let allOrders = [];
     const userMap = {};
 
+    // Turns whatever is stored in Firestore (any casing, older names) into one of
+    // this channel's known stages — or 'cancelled', which is terminal for both.
+    function normalizeStatus(rawValue, online) {
+        const raw = (rawValue || 'pending').toString().toLowerCase().trim();
+        const flow = online ? STATUS_FLOW.online : STATUS_FLOW.walkin;
+
+        if (raw === 'cancelled') return 'cancelled';
+        if (flow.includes(raw)) return raw;
+
+        // Legacy values from older records / other screens
+        if (raw === 'delivered' || raw === 'completed') return 'confirmed';
+        if (online && (raw === 'shipped' || raw === 'out_for_delivery' || raw === 'on delivery')) return 'in transit';
+        return 'pending';
+    }
+
+    // Returns the one stage after `status`, or null if the order is finished/cancelled.
+    function nextStatusFor(status, online) {
+        if (status === 'cancelled') return null;
+        const flow = online ? STATUS_FLOW.online : STATUS_FLOW.walkin;
+        const index = flow.indexOf(status);
+        if (index === -1 || index === flow.length - 1) return null;
+        return flow[index + 1];
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
+        // Pre-fetch name mappings
         const usersSnap = await db.collection('users').get();
         usersSnap.forEach(d => userMap[d.id] = d.data().username || d.data().firstName || '');
         const custSnap = await db.collection('customers').get();
@@ -302,13 +341,17 @@ include 'templates/header.php';
             renderOrders();
         });
 
-        document.getElementById('orderSearch').addEventListener('keyup', function() {
-            let val = this.value.toLowerCase();
-            document.querySelectorAll('#orderData tr').forEach(r => {
-                r.style.display = r.innerText.toLowerCase().includes(val) ? '' : 'none';
-            });
-        });
+        document.getElementById('orderSearch').addEventListener('keyup', applySearchFilter);
     });
+
+    // Hides rows that don't contain the search text. Called on typing AND after every
+    // re-render, so a live Firestore update doesn't wipe out what the user filtered.
+    function applySearchFilter() {
+        const val = document.getElementById('orderSearch').value.toLowerCase();
+        document.querySelectorAll('#orderData tr').forEach(r => {
+            r.style.display = r.innerText.toLowerCase().includes(val) ? '' : 'none';
+        });
+    }
 
     function setChannelTab(channel) {
         activeChannel = channel;
@@ -317,6 +360,53 @@ include 'templates/header.php';
         document.getElementById('logTitle').innerText = (channel === 'online' ? 'Online Orders Log' : 'Walk-in Orders Log');
         document.getElementById('orderSearch').value = '';
         renderOrders();
+    }
+
+    // Builds the HTML for the "Fulfillment Step" cell of one order row.
+    function buildStatusCell(orderId, status, online) {
+        const flow = online ? STATUS_FLOW.online : STATUS_FLOW.walkin;
+        const slug = status.replace(/\s+/g, '-');
+        const reachedIndex = flow.indexOf(status); // -1 for cancelled
+
+        const dots = flow.map((stage, i) =>
+            `<span class="step-dot ${i <= reachedIndex ? 'done' : ''}" title="${STATUS_LABELS[stage]}"></span>`
+        ).join('');
+
+        let actions = '';
+        const next = nextStatusFor(status, online);
+
+        if (next) {
+            const action = NEXT_ACTION_LABELS[next];
+            // Online "Confirm" means "the rider delivered it", so say that plainly.
+            const text = (next === 'confirmed' && online) ? 'Confirm Delivery' : action.text;
+            actions += `
+                <button type="button" class="btn-next-step"
+                        onclick="advanceOrder('${orderId}', '${online}', '${status}', this)">
+                    <i class="fa-solid ${action.icon}"></i> ${text}
+                </button>`;
+        }
+
+        // Walk-in only: Cancel stays available until the sale is Confirmed.
+        if (!online && status !== 'confirmed' && status !== 'cancelled') {
+            actions += `
+                <button type="button" class="btn-cancel-order"
+                        onclick="cancelWalkinOrder('${orderId}', '${status}', this)">
+                    <i class="fa-solid fa-ban"></i> Cancel
+                </button>`;
+        }
+
+        if (!actions) {
+            actions = `<span class="status-done-note">${status === 'cancelled' ? 'Order voided — no further steps.' : 'Completed — no further steps.'}</span>`;
+        }
+
+        return `
+            <div class="status-cell">
+                <div class="status-top">
+                    <span class="status-pill status-${slug}">${STATUS_LABELS[status]}</span>
+                    ${status !== 'cancelled' ? `<span class="step-dots">${dots}</span>` : ''}
+                </div>
+                <div class="status-actions">${actions}</div>
+            </div>`;
     }
 
     function renderOrders() {
@@ -328,16 +418,8 @@ include 'templates/header.php';
 
         const docs = activeChannel === 'online' ? onlineOrders : walkinOrders;
 
-        // Allow both Super Admins AND Admins to view the proof photo.
-        // If you only want Super Admins, change this to `window.currentUserRole === 'super-admin'`.
-        const showProof = (window.currentUserRole === 'super-admin' || window.currentUserRole === 'admin') && activeChannel === 'walkin';
-        
-        document.getElementById('proofHeader').style.display = showProof ? '' : 'none';
-        const colCount = showProof ? 6 : 5;
-        for (const key in proofByOrderId) delete proofByOrderId[key];
-
         if (docs.length === 0) {
-            orderData.innerHTML = "<tr><td colspan='" + colCount + "' class='text-center p-10 text-gray-400'>No " + (activeChannel === 'online' ? 'online' : 'walk-in') + " orders found for this branch.</td></tr>";
+            orderData.innerHTML = "<tr><td colspan='5' class='text-center p-10 text-gray-400'>No " + (activeChannel === 'online' ? 'online' : 'walk-in') + " orders found for this branch.</td></tr>";
             document.getElementById('totalOrders').innerText = 0;
             document.getElementById('pendingOrders').innerText = 0;
             document.getElementById('totalSales').innerText = '₱0.00';
@@ -349,52 +431,18 @@ include 'templates/header.php';
 
         docs.forEach(data => {
             const online = isOnlineOrder(data);
-            const rawStatus = (data.status || 'pending').toLowerCase();
-            const allowedOptions = online ? ORDER_STATUS_OPTIONS.online : ORDER_STATUS_OPTIONS.walkin;
-            let status = allowedOptions.includes(rawStatus) ? rawStatus
-                : (rawStatus === 'delivered' || rawStatus === 'completed') ? 'confirmed'
-                : 'pending';
+            const status = normalizeStatus(data.status, online);
 
-            const amount = parseFloat(data.total_price || data.total_amount || data.totalAmount || 0);
+            const amount = parseFloat(data.total_price || data.total_amount || 0);
             if (status === 'pending') pendingCount++;
             if (status === 'confirmed') salesTotal += amount;
 
             const dateObj = data.createdAt || data.timestamp;
             const date = dateObj ? dateObj.toDate().toLocaleDateString() : 'N/A';
-            const itemsSummary = (data.items || []).map(i => `${i.name} (${i.qty ?? i.quantity ?? 1})`).join(', ');
+            const itemsSummary = (data.items || []).map(i => `${i.name} (${i.qty})`).join(', ');
             const uid = data.user_id || '';
             const customerName = data.customer_name || userMap[uid] || 'Walk-in Customer';
             const avatarInitial = customerName.charAt(0).toUpperCase();
-
-            // "Touch move": once an order is Confirmed or Cancelled (or flagged
-            // locked) the dropdown is frozen for everyone. Employees can only
-            // change walk-in orders; online orders stay admin-only.
-            const isFinal = status === 'confirmed' || status === 'cancelled' || data.locked === true;
-            const canEdit = !isFinal && (!isStaffRole || !online);
-            const lockTitle = isFinal
-                ? 'This order is final and can no longer be changed.'
-                : 'Only admins can update online orders.';
-
-            const optionsHtml = allowedOptions.map(opt =>
-                `<option value="${opt}" ${status === opt ? 'selected' : ''}>${STATUS_LABELS[opt]}</option>`
-            ).join('');
-
-            let proofCell = '';
-            if (showProof) {
-                if (isSafeProofUrl(data.proofPhotoUrl)) {
-                    proofByOrderId[data.id] = {
-                        url: data.proofPhotoUrl,
-                        capturedAt: data.proofCapturedAt,
-                        uploadedAt: data.proofUploadedAt,
-                        capturedBy: data.proofCapturedBy || data.processedBy || data.cashierEmail || 'Unknown',
-                        amount: amount,
-                        label: data.orderId || data.order_id || data.id
-                    };
-                    proofCell = `<td><button type="button" class="proof-btn" onclick="openProofViewer('${data.id}')"><i class="fa-solid fa-camera"></i> View Photo</button></td>`;
-                } else {
-                    proofCell = `<td><span class="proof-none">No photo</span></td>`;
-                }
-            }
 
             html += `
             <tr>
@@ -407,13 +455,7 @@ include 'templates/header.php';
                 <td class="max-w-[250px] text-xs font-semibold text-gray-400 truncate">${itemsSummary}</td>
                 <td class="font-black text-pink-600">₱${amount.toLocaleString(undefined, {minimumFractionDigits:2})}</td>
                 <td class="text-gray-400 font-semibold text-xs">${date}</td>
-                <td>
-                    <select class="status-select" data-prev-status="${status}" ${canEdit ? '' : 'disabled title="' + lockTitle + '"'} onchange="handleStatusChange('${data.id}', '${online}', this.value, this)">
-                        ${optionsHtml}
-                    </select>
-                    ${isFinal ? '<div class="lock-note"><i class="fa-solid fa-lock"></i> Final</div>' : ''}
-                </td>
-                ${proofCell}
+                <td>${buildStatusCell(data.id, status, online)}</td>
             </tr>`;
         });
 
@@ -421,330 +463,142 @@ include 'templates/header.php';
         document.getElementById('totalOrders').innerText = docs.length;
         document.getElementById('pendingOrders').innerText = pendingCount;
         document.getElementById('totalSales').innerText = '₱' + salesTotal.toLocaleString(undefined, {minimumFractionDigits: 2});
+        applySearchFilter();
     }
 
-    // --- CHANGED: Now accepts Cloudinary URLs too! ---
-    function isSafeProofUrl(url) {
-        if (typeof url !== 'string' || url === '') return false;
+    // The single write path for EVERY status change on this page.
+    // It re-reads the order inside a transaction and only writes if the order is
+    // still at `expectedFrom`. That's what makes skipping impossible: if someone else
+    // (or another tab) already moved it, this refuses instead of jumping ahead.
+    async function runGuardedTransition(orderId, expectedFrom, online, updateData) {
+        // Finalized invoices can't be edited directly — only the Void module may touch them
+        if (typeof window.blockIfLocked === 'function' && await window.blockIfLocked(orderId)) {
+            return false;
+        }
+
+        const orderRef = db.collection('orders').doc(orderId);
+
+        await db.runTransaction(async (tx) => {
+            const snap = await tx.get(orderRef);
+            if (!snap.exists) throw new Error('This order no longer exists.');
+
+            const current = normalizeStatus(snap.data().status, online);
+            if (current !== expectedFrom) {
+                throw new Error(`This order is already "${STATUS_LABELS[current]}". The list has refreshed — please check it again.`);
+            }
+            tx.update(orderRef, updateData);
+        });
+
+        // Accountability record — same action name/shape the Flutter app writes
+        // (AdminAuditService 'order_status_change'), so web and mobile changes show up
+        // identically in Admin Activity Log. Never blocks the status change itself.
         try {
-            const u = new URL(url);
-            if (u.protocol !== 'https:') return false;
-            
-            // Accept Firebase Storage links
-            if (u.hostname === 'firebasestorage.googleapis.com' || u.hostname.endsWith('.firebasestorage.app')) {
-                return true;
-            }
-            // Accept Cloudinary links
-            if (u.hostname === 'res.cloudinary.com') {
-                return true;
-            }
-            return false;
-        } catch (e) {
-            return false;
+            await db.collection('admin_actions').add({
+                actorUid: firebase.auth().currentUser ? firebase.auth().currentUser.uid : null,
+                actorEmail: window.currentUserEmail || null,
+                actorRole: window.currentUserRole || null,
+                action: 'order_status_change',
+                targetUid: orderId,
+                targetEmail: null,
+                details: `Order status changed to "${STATUS_LABELS[updateData.status] || updateData.status}".`,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        } catch (auditError) {
+            console.warn('Audit log write failed (status still updated):', auditError);
         }
+        return true;
     }
 
-    function toDateOrNull(ts) {
-        return (ts && typeof ts.toDate === 'function') ? ts.toDate() : null;
-    }
-
-    function formatProofDate(d) {
-        return d ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }) : '—';
-    }
-
-    function openProofViewer(orderId) {
-        if (!canViewProof) return;
-        const proof = proofByOrderId[orderId];
-        if (!proof) return;
-
-        const img = document.getElementById('proofViewerImg');
-        const imgError = document.getElementById('proofViewerImgError');
-        img.style.display = 'block';
-        imgError.style.display = 'none';
-        img.onerror = () => { img.style.display = 'none'; imgError.style.display = 'block'; };
-        img.src = proof.url;
-
-        // CHANGED: Handle Cloudinary (ISO string) vs Firebase (Timestamp object) for dates
-        const capturedRaw = proof.capturedAt;
-        const uploadedRaw = proof.uploadedAt;
-        
-        const captured = (capturedRaw && typeof capturedRaw.toDate === 'function') ? capturedRaw.toDate() : new Date(capturedRaw);
-        const uploaded = (uploadedRaw && typeof uploadedRaw.toDate === 'function') ? uploadedRaw.toDate() : new Date(uploadedRaw);
-
-        document.getElementById('proofViewerOrderId').innerText = 'Order ' + proof.label;
-        document.getElementById('proofCapturedAt').innerText = formatProofDate(isNaN(captured) ? null : captured);
-        document.getElementById('proofUploadedAt').innerText = formatProofDate(isNaN(uploaded) ? null : uploaded);
-        document.getElementById('proofCapturedBy').innerText = proof.capturedBy;
-        document.getElementById('proofTotal').innerText = '₱' + proof.amount.toLocaleString(undefined, { minimumFractionDigits: 2 });
-        document.getElementById('proofOpenLink').href = proof.url;
-
-        const warning = document.getElementById('proofClockWarning');
-        const CLOCK_GAP_LIMIT_MIN = 10;
-        if (!isNaN(captured) && !isNaN(uploaded)) {
-            const gapMin = Math.abs(uploaded - captured) / 60000;
-            if (gapMin > CLOCK_GAP_LIMIT_MIN) {
-                warning.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ';
-                warning.append(`The device time and server time differ by ${Math.round(gapMin)} minutes. The phone's clock may have been changed, or the upload was delayed.`);
-                warning.style.display = 'block';
-            } else {
-                warning.style.display = 'none';
-            }
-        } else {
-            warning.style.display = 'none';
-        }
-
-        document.getElementById('proofViewerOverlay').classList.add('open');
-    }
-
-    function closeProofViewer() {
-        document.getElementById('proofViewerOverlay').classList.remove('open');
-        document.getElementById('proofViewerImg').src = '';
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeProofViewer();
-    });
-
-    async function handleStatusChange(orderId, onlineStr, newStatus, selectEl) {
+    // Clicked from a row's "next step" button. Moves the order exactly ONE stage forward.
+    async function advanceOrder(orderId, onlineStr, fromStatus, btn) {
         const online = onlineStr === 'true';
-        if (online && newStatus === 'confirmed') {
-            openPodCapture(orderId, selectEl);
-            return;
-        }
-        // Walk-in Confirm / Cancel are final, so they get their own guarded flow.
-        if (!online && newStatus === 'confirmed') {
-            await confirmWalkIn(orderId, selectEl);
-            return;
-        }
-        if (!online && newStatus === 'cancelled') {
-            await cancelWalkIn(orderId, selectEl);
-            return;
-        }
-        await secureStatusTransition(orderId, newStatus, selectEl);
-    }
+        const next = nextStatusFor(fromStatus, online);
+        if (!next) return;
 
-    // ---------- Reusable dialog (replaces ugly browser confirm()) ----------
-    let bloomDialogResolve = null;
-
-    function askBloomDialog({ title, message, confirmText = 'Confirm', cancelText = 'Keep order', danger = true, withInput = false, error = '' }) {
-        return new Promise(resolve => {
-            bloomDialogResolve = resolve;
-            document.getElementById('bloomDialogTitle').textContent = title;
-            document.getElementById('bloomDialogMsg').textContent = message;
-            const okBtn = document.getElementById('bloomDialogOkBtn');
-            okBtn.textContent = confirmText;
-            okBtn.classList.toggle('safe', !danger);
-            document.getElementById('bloomDialogCancelBtn').textContent = cancelText;
-
-            const inputWrap = document.getElementById('bloomDialogInputWrap');
-            const input = document.getElementById('bloomDialogInput');
-            inputWrap.style.display = withInput ? 'block' : 'none';
-            input.value = '';
-
-            const errEl = document.getElementById('bloomDialogError');
-            errEl.textContent = error;
-            errEl.style.display = error ? 'block' : 'none';
-
-            document.getElementById('bloomDialogOverlay').classList.add('open');
-            if (withInput) setTimeout(() => input.focus(), 50);
-        });
-    }
-
-    function closeBloomDialog(confirmed) {
-        const value = document.getElementById('bloomDialogInput').value;
-        document.getElementById('bloomDialogOverlay').classList.remove('open');
-        const resolve = bloomDialogResolve;
-        bloomDialogResolve = null;
-        if (resolve) resolve({ confirmed: confirmed, value: value });
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (!bloomDialogResolve) return;
-        if (e.key === 'Escape') closeBloomDialog(false);
-        if (e.key === 'Enter') closeBloomDialog(true);
-    });
-
-    // ---------- Walk-in: Confirm ----------
-    async function confirmWalkIn(orderId, selectEl) {
-        const answer = await askBloomDialog({
-            title: 'Confirm this order?',
-            message: 'Once an order is confirmed it is final. You will not be able to change its status again.',
-            confirmText: 'Yes, confirm',
-            cancelText: 'Not yet',
-            danger: false
-        });
-        if (!answer.confirmed) {
-            selectEl.value = selectEl.dataset.prevStatus;
-            return;
-        }
-        await writeFinalStatus(orderId, 'confirmed', {}, selectEl);
-    }
-
-    // ---------- Walk-in: Cancel (employees limited to 3 a day) ----------
-    // Counts today's cancelled walk-in orders for this branch. `allOrders` is
-    // already filtered to the current branch by the Firestore listener.
-    function countTodaysWalkInCancellations() {
-        const startOfToday = new Date();
-        startOfToday.setHours(0, 0, 0, 0);
-        return allOrders.filter(o => {
-            if (isOnlineOrder(o)) return false;
-            if (String(o.status || '').toLowerCase() !== 'cancelled') return false;
-            // cancelledAt is what we write now; older cancels only have updated_at.
-            const raw = o.cancelledAt || o.updated_at || o.updatedAt;
-            const d = (raw && typeof raw.toDate === 'function') ? raw.toDate() : (raw ? new Date(raw) : null);
-            return d && !isNaN(d) && d >= startOfToday;
-        }).length;
-    }
-
-    async function cancelWalkIn(orderId, selectEl) {
-        const used = countTodaysWalkInCancellations();
-        let allowed = false;
-
-        if (!isStaffRole) {
-            // Admins / super-admins: plain "are you sure", no limit.
-            const answer = await askBloomDialog({
-                title: 'Cancel this order?',
-                message: 'Once an order is cancelled it is final. This cannot be undone.',
-                confirmText: 'Yes, cancel order'
-            });
-            allowed = answer.confirmed;
-        } else if (used < DAILY_CANCEL_LIMIT) {
-            const answer = await askBloomDialog({
-                title: 'Cancel this order?',
-                message: 'Once an order is cancelled it is final. This cannot be undone.\n\n'
-                    + 'Cancellations used today at this branch: ' + used + ' of ' + DAILY_CANCEL_LIMIT + '.',
-                confirmText: 'Yes, cancel order'
-            });
-            allowed = answer.confirmed;
-        } else {
-            allowed = await requestOverrideCode(orderId, used);
-        }
-
-        if (!allowed) {
-            selectEl.value = selectEl.dataset.prevStatus;
+        // Online "confirmed" is never a plain write — it must go through the rider's
+        // proof-of-delivery capture first. The status only flips once that's submitted.
+        if (online && next === 'confirmed') {
+            openPodCapture(orderId);
             return;
         }
 
-        await writeFinalStatus(orderId, 'cancelled', {
-            paymentStatus: 'Voided',
-            cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
-            cancelledBy: window.currentUserName || 'Staff'
-        }, selectEl);
-    }
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
 
-    // The branch has hit the daily limit: ask for a single-use code made on
-    // the Override Codes page. The code is checked (and burned) by the server.
-    async function requestOverrideCode(orderId, used) {
-        let lastError = '';
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            const answer = await askBloomDialog({
-                title: 'Manager override required',
-                message: 'This branch has already cancelled ' + used + ' walk-in orders today. '
-                    + 'Ask an admin for a single-use override code to continue.',
-                confirmText: 'Verify & cancel',
-                cancelText: 'Keep order',
-                withInput: true,
-                error: lastError
-            });
-            if (!answer.confirmed) return false;
-
-            const code = answer.value.trim();
-            if (!code) {
-                lastError = 'Please enter the override code.';
-                attempt--;            // an empty box should not use up a try
-                continue;
-            }
-
-            const result = await verifyOverrideCode(code, orderId);
-            if (result.valid) return true;
-            lastError = result.message || 'Invalid or already-used override code.';
+        const updateData = {
+            status: next,
+            updated_at: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        if (!online && next === 'confirmed') {
+            // Walk-in sale completed at the counter = paid (same rule as order_details.php).
+            updateData.paymentStatus = 'Paid';
         }
-        alert('Too many wrong codes. The order was NOT cancelled.');
-        return false;
-    }
 
-    async function verifyOverrideCode(code, orderId) {
         try {
-            const user = firebase.auth().currentUser;
-            if (!user) {
-                return { valid: false, message: 'Your sign-in expired. Reload the page and try again.' };
-            }
-            const token = await user.getIdToken();
-            const response = await fetch('verify_override_code.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({ branchId: window.currentBranch, code: code, orderId: orderId })
-            });
-            let data = {};
-            try { data = await response.json(); } catch (_) { data = {}; }
-            if (!data.success) return { valid: false, message: data.message || 'Could not verify the code. Please try again.' };
-            return { valid: data.valid === true, message: data.message };
+            await runGuardedTransition(orderId, fromStatus, online, updateData);
+            // No manual UI update needed: the onSnapshot listener fires after the write
+            // and re-renders this row with the new pill + the next button.
         } catch (e) {
-            return { valid: false, message: 'Network problem while checking the code. Please try again.' };
+            alert('Status update rejected: ' + e.message);
+        } finally {
+            // If the row was re-rendered, this button is already gone — harmless.
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
         }
     }
 
-    // Writes Confirmed / Cancelled and locks the order in the same update, so
-    // it is "touch move" from the moment it is saved.
-    async function writeFinalStatus(orderId, newStatus, extraFields, selectEl) {
+    // Walk-in only. Cancelling = a voided sale. No money moves — this business does
+    // not refund a cancelled/voided item, it just stops the sale.
+    async function cancelWalkinOrder(orderId, fromStatus, btn) {
+        if (!confirm('Cancel this walk-in order? It will be marked Voided and locked.')) return;
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
         try {
-            if (await window.blockIfLocked(orderId)) {
-                selectEl.value = selectEl.dataset.prevStatus;
-                return;
-            }
-            await db.collection('orders').doc(orderId).update({
-                status: newStatus,
+            await runGuardedTransition(orderId, fromStatus, false, {
+                status: 'cancelled',
+                paymentStatus: 'Voided',
                 locked: true,
-                updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-                ...extraFields
+                // The mobile app counts today's walk-in cancellations by this field,
+                // so web cancellations now count toward the same daily limit.
+                cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+                updated_at: firebase.firestore.FieldValue.serverTimestamp()
             });
-            selectEl.dataset.prevStatus = newStatus;
         } catch (e) {
-            alert('Update rejected: ' + e.message);
-            selectEl.value = selectEl.dataset.prevStatus;
+            alert('Cancellation rejected: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
         }
     }
 
-    async function secureStatusTransition(orderId, newStatus, selectEl) {
-        try {
-            if (await window.blockIfLocked(orderId)) {
-                selectEl.value = selectEl.dataset.prevStatus;
-                return;
-            }
-            const updateData = { status: newStatus, updated_at: firebase.firestore.FieldValue.serverTimestamp() };
-            if (newStatus === 'cancelled') {
-                updateData.paymentStatus = 'Voided';
-                updateData.locked = true;
-            }
-            await db.collection('orders').doc(orderId).update(updateData);
-            selectEl.dataset.prevStatus = newStatus;
-        } catch (e) {
-            alert('Fulfillment Mutation Rejected: ' + e.message);
-            selectEl.value = selectEl.dataset.prevStatus;
-        }
-    }
-
+    // --- Proof of Delivery capture (online orders only) ---
+    // This is the one and only place an online order becomes "Confirmed." It can only
+    // be opened from an order that is currently "In Transit" (the button only appears
+    // there), and the save re-checks that inside the transaction too.
     let podTargetOrderId = null;
-    let podTargetSelectEl = null;
     let podCompressedDataUrl = null;
 
-    function openPodCapture(orderId, selectEl) {
+    function openPodCapture(orderId) {
         podTargetOrderId = orderId;
-        podTargetSelectEl = selectEl;
         podCompressedDataUrl = null;
+
         document.getElementById('podCaptureError').style.display = 'none';
         document.getElementById('podFileInput').value = '';
         document.getElementById('podPreviewWrap').style.display = 'none';
         document.getElementById('podRecipientInput').value = '';
         document.getElementById('podCourierInput').value = window.currentUserName || '';
+
         document.getElementById('podCaptureOverlay').classList.add('open');
     }
 
     function cancelPodCapture() {
-        if (podTargetSelectEl) podTargetSelectEl.value = podTargetSelectEl.dataset.prevStatus;
+        // Nothing was written, and there's no dropdown to revert anymore — just close.
         document.getElementById('podCaptureOverlay').classList.remove('open');
         podTargetOrderId = null;
-        podTargetSelectEl = null;
         podCompressedDataUrl = null;
     }
 
@@ -754,6 +608,9 @@ include 'templates/header.php';
         el.style.display = 'block';
     }
 
+    // Firestore caps a document at 1 MiB and this photo shares that document with the
+    // rest of the order's fields, so a full-resolution phone photo needs to be
+    // downscaled/re-encoded client-side before it can be saved.
     function compressImageFile(file, maxDimension, quality) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -804,6 +661,7 @@ include 'templates/header.php';
     async function confirmPodCapture() {
         const btn = document.getElementById('podConfirmBtn');
         document.getElementById('podCaptureError').style.display = 'none';
+
         const recipient = document.getElementById('podRecipientInput').value.trim();
         const courier = document.getElementById('podCourierInput').value.trim();
 
@@ -813,7 +671,11 @@ include 'templates/header.php';
         btn.disabled = true;
         btn.innerText = 'Saving...';
         try {
-            await db.collection('orders').doc(podTargetOrderId).update({
+            // One write: status flips to Confirmed, payment settles, the order locks,
+            // and the proof lands together — there is never a moment where the order
+            // reads Confirmed without POD attached, or vice versa. The transaction only
+            // allows this if the order is still "In Transit".
+            const saved = await runGuardedTransition(podTargetOrderId, 'in transit', true, {
                 status: 'confirmed',
                 paymentStatus: 'Paid',
                 locked: true,
@@ -824,12 +686,11 @@ include 'templates/header.php';
                 updated_at: firebase.firestore.FieldValue.serverTimestamp()
             });
 
-            if (podTargetSelectEl) podTargetSelectEl.dataset.prevStatus = 'confirmed';
-
-            document.getElementById('podCaptureOverlay').classList.remove('open');
-            podTargetOrderId = null;
-            podTargetSelectEl = null;
-            podCompressedDataUrl = null;
+            if (saved) {
+                document.getElementById('podCaptureOverlay').classList.remove('open');
+                podTargetOrderId = null;
+                podCompressedDataUrl = null;
+            }
         } catch (err) {
             podShowError('Error saving delivery: ' + err.message);
         } finally {

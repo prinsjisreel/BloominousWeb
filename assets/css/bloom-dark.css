@@ -1,0 +1,99 @@
+/* =====================================================================
+   BLOOMINOUS - Global dark-mode overrides for admin pages
+   Loaded by templates/header.php. Only applies when <html data-theme="dark">
+   (header.php sets that attribute before the page paints).
+
+   Palette = the exact dark values header.php already defines:
+     card #2A241D | alt #221D17 | border #3F382F | text #EAE6DF | muted #A0998F
+   Everything is !important on purpose, so a page's own hardcoded white
+   (background:#fff) can never win over the theme.
+   ===================================================================== */
+
+/* ---------- Cards / panels ---------- */
+html[data-theme="dark"] .stat-card,
+html[data-theme="dark"] .list-card,
+html[data-theme="dark"] .table-card,
+html[data-theme="dark"] #podCaptureModal,
+html[data-theme="dark"] #podViewCard {
+    background: #2A241D !important;
+    border-color: #3F382F !important;
+    box-shadow: none !important;
+    color: #EAE6DF !important;
+}
+html[data-theme="dark"] .stat-card h3,
+html[data-theme="dark"] #podCaptureModal h3 { color: #EAE6DF !important; }
+
+/* ---------- Tables (Orders + Delivery Status) ---------- */
+html[data-theme="dark"] #orderTable th,
+html[data-theme="dark"] .table-card th {
+    background: #221D17 !important;
+    color: #A0998F !important;
+    border-bottom-color: #3F382F !important;
+}
+html[data-theme="dark"] #orderTable td,
+html[data-theme="dark"] .table-card td {
+    background: transparent !important;
+    color: #EAE6DF !important;
+    border-bottom-color: #3F382F !important;
+}
+html[data-theme="dark"] .table-card tr:hover td { background: #221D17 !important; }
+
+/* ---------- Tailwind utility classes used inside page content ---------- */
+html[data-theme="dark"] main .bg-white {
+    background-color: #2A241D !important;
+    border-color: #3F382F !important;
+    color: #EAE6DF !important;
+}
+html[data-theme="dark"] main .bg-gray-50\/30 { background-color: #221D17 !important; }
+html[data-theme="dark"] main .border-gray-100,
+html[data-theme="dark"] main .border-gray-50 { border-color: #3F382F !important; }
+html[data-theme="dark"] main .text-gray-800 { color: #EAE6DF !important; }
+html[data-theme="dark"] main .text-gray-400,
+html[data-theme="dark"] main .text-gray-300 { color: #A0998F !important; }
+html[data-theme="dark"] main .text-pink-600 { color: #F59E0B !important; } /* amounts -> brand amber */
+
+/* ---------- Search box ---------- */
+html[data-theme="dark"] #orderSearch {
+    background: #2A241D !important;
+    border-color: #3F382F !important;
+    color: #EAE6DF !important;
+    box-shadow: none !important;
+}
+html[data-theme="dark"] #orderSearch::placeholder { color: #A0998F !important; }
+
+/* ---------- Online / Walk-in tabs ---------- */
+html[data-theme="dark"] .channel-tab:not(.active) {
+    background: #2A241D !important;
+    border-color: #3F382F !important;
+    color: #A0998F !important;
+}
+html[data-theme="dark"] .channel-tab:not(.active):hover { border-color: #F59E0B !important; color: #EAE6DF !important; }
+html[data-theme="dark"] .channel-tab .count { background: #221D17 !important; color: #A0998F !important; }
+html[data-theme="dark"] .channel-tab.active {
+    background: linear-gradient(rgba(245,158,11,0.14), rgba(245,158,11,0.14)), #2A241D !important;
+    border-color: #F59E0B !important;
+    color: #F59E0B !important;
+}
+html[data-theme="dark"] .channel-tab.active .count { background: #F59E0B !important; color: #fff !important; }
+
+/* ---------- Step buttons, dots, notes ---------- */
+html[data-theme="dark"] .step-dot { background: #3F382F !important; }
+html[data-theme="dark"] .step-dot.done { background: #F59E0B !important; }
+html[data-theme="dark"] .status-done-note { color: #A0998F !important; }
+html[data-theme="dark"] .btn-cancel-order { color: #fca5a5 !important; border-color: rgba(248,113,113,0.45) !important; }
+
+/* ---------- Delivery popups ---------- */
+html[data-theme="dark"] #podCaptureModal p.pod-sub,
+html[data-theme="dark"] .pod-field label,
+html[data-theme="dark"] #podViewMeta { color: #A0998F !important; }
+html[data-theme="dark"] .pod-field input[type="text"],
+html[data-theme="dark"] .pod-drop { background: #221D17 !important; border-color: #3F382F !important; color: #EAE6DF !important; }
+html[data-theme="dark"] .pod-cancel,
+html[data-theme="dark"] #podViewCard button { background: #221D17 !important; color: #A0998F !important; }
+
+/* ---------- Delivery Status badges (soft, readable on dark) ---------- */
+html[data-theme="dark"] .badge-pending   { background: rgba(245,158,11,0.16) !important; color: #F59E0B !important; }
+html[data-theme="dark"] .badge-prepared  { background: rgba(0,206,209,0.16) !important; color: #00c4c7 !important; }
+html[data-theme="dark"] .badge-transit   { background: rgba(123,121,242,0.18) !important; color: #8b89f5 !important; }
+html[data-theme="dark"] .badge-confirmed { background: rgba(46,204,113,0.16) !important; color: #2ecc71 !important; }
+html[data-theme="dark"] .badge-cancelled { background: rgba(150,150,150,0.18) !important; color: #9a9a9a !important; }

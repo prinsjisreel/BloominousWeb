@@ -31,6 +31,17 @@
  *      Both need a written reason, an up-to-date history, and a
  *      confirmation. The server re-checks everything.
  *
+ * RESTRICTION APPEALS (panel above the account list):
+ *   A restricted customer cannot order with ANY payment method. They send an
+ *   appeal from the checkout (web + app) to fraud_appeal.php, which saves it
+ *   in fraud_appeals/{uid} and notifies the super admin. This page listens to
+ *   the pending appeals live, shows them in the "Restriction Appeals" panel,
+ *   and an admin decides in the Appeal window:
+ *        Lift Restriction  -> fraud_appeal.php (decision: approve)
+ *        Keep Restriction  -> fraud_appeal.php (decision: deny; the customer
+ *                             can appeal again after 24 hours)
+ *   Each needs a written reason, saved in the admin audit log.
+ *
  * The file name stays fraud_analytics.php on purpose so existing sidebar
  * links and bookmarks keep working.
  */
@@ -198,6 +209,41 @@ include 'templates/header.php';
     .fh-decision-msg.success { color: #047857; }
     .fh-decision-msg.error { color: #b91c1c; }
 
+    /* Restriction appeals panel + appeal window */
+    .appeals-panel { background: var(--surface); border: 1px solid #fcd34d; border-radius: 28px; padding: 1.5rem 1.75rem; margin-bottom: 2rem; }
+    .appeals-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+    .appeals-title { font-size: 0.95rem; font-weight: 900; color: var(--text-main); margin: 0; }
+    .appeals-count { font-size: 0.65rem; font-weight: 900; padding: 4px 12px; border-radius: 20px; background: #f59e0b; color: #fff; }
+    .appeals-sub { font-size: 0.75rem; color: #6b7280; margin: 0 0 14px; line-height: 1.5; }
+    .appeal-item { border: 1px solid var(--border-color); border-radius: 18px; padding: 14px 16px; margin-top: 10px; display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+    .appeal-item-main { flex: 1; min-width: 240px; }
+    .appeal-item-name { font-size: 0.9rem; font-weight: 900; color: var(--text-main); margin: 0; }
+    .appeal-item-meta { font-size: 0.7rem; color: #6b7280; margin: 2px 0 6px; }
+    .appeal-item-text { font-size: 0.8rem; color: #374151; line-height: 1.5; margin: 0; white-space: pre-wrap; word-break: break-word; }
+    .appeal-open-btn { padding: 9px 16px; border-radius: 20px; font-size: 0.68rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; border: none; cursor: pointer; color: #fff; background: #ec4899; font-family: inherit; white-space: nowrap; }
+    .appeal-chip { font-size: 0.6rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 10px; border-radius: 10px; background: #fffbeb; color: #92400e; border: 1px solid #fde68a; display: inline-flex; align-items: center; gap: 5px; }
+    /* Appeal shown directly under a customer's name (card + log window) */
+    .appeal-inline { margin-top: 10px; border: 1px solid #fcd34d; background: #fffbeb; border-radius: 14px; padding: 10px 12px; max-width: 520px; }
+    .appeal-inline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .appeal-inline-label { font-size: 0.62rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px; color: #92400e; }
+    .appeal-inline-text { font-size: 0.78rem; line-height: 1.5; color: #1f2937; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+    .appeal-inline-meta { font-size: 0.65rem; color: #6b7280; margin: 4px 0 0; }
+    .appeal-inline .appeal-open-btn { padding: 6px 12px; font-size: 0.62rem; }
+    html[data-theme="dark"] .appeal-inline { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); }
+    html[data-theme="dark"] .appeal-inline-label { color: #fcd34d; }
+    html[data-theme="dark"] .appeal-inline-text { color: var(--text-main); }
+    #appealOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.55); z-index: 520; align-items: center; justify-content: center; padding: 20px; }
+    #appealOverlay.open { display: flex; }
+    #appealModal { background: var(--surface); color: var(--text-main); border-radius: 24px; padding: 2rem; max-width: 640px; width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 30px 60px rgba(0,0,0,0.2); }
+    #appealModal h3 { font-size: 1.25rem; font-weight: 900; margin: 0 0 0.25rem; }
+    #appealModal .close-btn { float: right; background: none; border: none; font-size: 1.1rem; color: #999; cursor: pointer; }
+    .appeal-message-box { background: #f9fafb; border: 1px solid var(--border-color); border-radius: 14px; padding: 12px 14px; font-size: 0.82rem; line-height: 1.6; color: #1f2937; white-space: pre-wrap; word-break: break-word; margin: 6px 0 14px; max-height: 220px; overflow-y: auto; }
+    #appealReason { width: 100%; border: 1px solid var(--border-color); border-radius: 12px; padding: 10px 12px; font-size: 0.82rem; font-family: inherit; resize: vertical; background: var(--surface); color: var(--text-main); outline: none; }
+    #appealReason:focus { border-color: #f9a8d4; }
+    .decision-lift { background: #059669; }
+    .decision-keep { background: #b45309; }
+    .appeal-open-log { font-size: 0.7rem; font-weight: 800; color: #7380ec; background: none; border: none; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; padding: 0; font-family: inherit; }
+
     /* ============ DARK MODE ============
        Only active when header.php sets data-theme="dark" on <html>. */
     html[data-theme="dark"] .audit-trail-btn { background: var(--surface-alt); }
@@ -222,6 +268,11 @@ include 'templates/header.php';
     html[data-theme="dark"] .fh-blocked-note { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
     html[data-theme="dark"] .fh-decision-msg.success { color: #6ee7b7; }
     html[data-theme="dark"] .fh-decision-msg.error { color: #fca5a5; }
+
+    html[data-theme="dark"] :is(.appeals-sub, .appeal-item-meta) { color: var(--text-secondary); }
+    html[data-theme="dark"] .appeal-item-text { color: var(--text-main); }
+    html[data-theme="dark"] .appeal-message-box { background: var(--surface-alt); color: var(--text-main); }
+    html[data-theme="dark"] .appeal-chip { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
 
     html[data-theme="dark"] .risk-low { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
     html[data-theme="dark"] .risk-medium { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
@@ -304,6 +355,17 @@ include 'templates/header.php';
         </div>
     </div>
 
+    <!-- Restriction appeals: filled live by JavaScript from fraud_appeals.
+         Stays hidden while there is nothing to review. -->
+    <section id="appealsPanel" class="appeals-panel" style="display:none;">
+        <div class="appeals-head">
+            <h2 class="appeals-title"><i class="fa-solid fa-envelope-open-text mr-2 text-amber-500"></i>Restriction Appeals</h2>
+            <span class="appeals-count" id="appealsCount">0</span>
+        </div>
+        <p class="appeals-sub">These customers cannot order with any payment method until you decide. Read the appeal, check the account's log if needed, then lift or keep the restriction.</p>
+        <div id="appealsList"></div>
+    </section>
+
     <!-- Filter chips: built by JavaScript from FILTERS below -->
     <div id="fraudFilterBar" class="flex flex-wrap gap-2 mb-8"></div>
 
@@ -318,6 +380,8 @@ include 'templates/header.php';
         <button class="close-btn" onclick="closeFraudActivityLog()"><i class="fa-solid fa-xmark"></i></button>
         <h3 id="fhCustomerName">Fraud Activity Log</h3>
         <p class="text-xs text-gray-400 font-mono mb-3" id="fhCustomerUid"></p>
+        <!-- Pending appeal for this customer (filled by renderLogAppeal) -->
+        <div id="fhAppeal"></div>
         <div class="fh-summary" id="fhRiskSummary"></div>
 
         <div class="fh-section">
@@ -368,6 +432,37 @@ include 'templates/header.php';
                     <p id="fhDecisionMsg" class="fh-decision-msg"></p>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Appeal window: opened from the Restriction Appeals panel.
+     Static markup on purpose: re-rendering would wipe the reason being typed. -->
+<div id="appealOverlay">
+    <div id="appealModal" role="dialog" aria-modal="true" aria-labelledby="appealTitle">
+        <button class="close-btn" type="button" onclick="closeAppealModal()"><i class="fa-solid fa-xmark"></i></button>
+        <h3 id="appealTitle">Restriction Appeal</h3>
+        <p class="text-xs text-gray-400 font-mono mb-3" id="appealUid"></p>
+        <div class="fh-summary" id="appealSummary"></div>
+
+        <h4 class="mb-1" style="font-size:0.7rem;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#9ca3af;">Customer's Appeal</h4>
+        <div class="appeal-message-box" id="appealMessage"></div>
+
+        <p class="mb-3"><button type="button" class="appeal-open-log" id="appealOpenLog"><i class="fa-solid fa-clock-rotate-left mr-1"></i>Open this account's Fraud Activity Log &rarr;</button></p>
+
+        <div class="fh-decision-box">
+            <p class="fh-meta" style="margin-bottom:8px;">Your reason is saved in the admin audit log. The customer only sees whether the appeal was approved or not.</p>
+            <textarea id="appealReason" rows="3" maxlength="500" placeholder="Explain your decision (at least 15 characters)..."></textarea>
+            <div class="fh-reason-meta"><span id="appealReasonCount">0 / 500</span></div>
+            <div class="fh-decision-buttons">
+                <button type="button" id="appealLift" class="decision-btn decision-lift" disabled>
+                    <i class="fa-solid fa-lock-open"></i> Lift Restriction
+                </button>
+                <button type="button" id="appealKeep" class="decision-btn decision-keep" disabled>
+                    <i class="fa-solid fa-lock"></i> Keep Restriction
+                </button>
+            </div>
+            <p id="appealDecisionMsg" class="fh-decision-msg"></p>
         </div>
     </div>
 </div>
@@ -435,7 +530,7 @@ include 'templates/header.php';
         <div class="guide-section">
             <h4>5. What happens automatically, and what staff decide</h4>
             <ul>
-                <li><strong>Banned device:</strong> the account is restricted for up to 30 days. The customer can lift it by verifying their phone number.</li>
+                <li><strong>Banned device:</strong> the account is restricted for up to 30 days. While restricted, the customer cannot order with any payment method (GCash, Maya or Cash on Delivery). Verifying a phone number does not lift it. Instead, the checkout shows an <em>Appeal</em> link above the restriction message.</li>
                 <li><strong>Score of 50 or more:</strong> Cash on Delivery is turned off and the customer pays online with GCash or Maya. Fresh bouquets cannot be resold if a delivery is refused, so this protects the shop without stopping the order.</li>
                 <li><strong>Everything else:</strong> the order goes through normally and the warning signs wait for staff review.</li>
             </ul>
@@ -443,6 +538,7 @@ include 'templates/header.php';
             <ul>
                 <li><strong>Confirm Fraud:</strong> the account is blacklisted and its devices are banned.</li>
                 <li><strong>Mark False Alarm:</strong> any restriction is lifted and Cash on Delivery comes back, until a new warning sign appears.</li>
+                <li><strong>Restriction appeals:</strong> when a restricted customer sends an appeal, you get a notification and the appeal appears in the <em>Restriction Appeals</em> panel at the top of this page. Read it, open the account's log if you want more detail, then choose <em>Lift Restriction</em> or <em>Keep Restriction</em> with a written reason. If you keep it, the customer can send a new appeal after 24 hours. Restrictions also end by themselves after 30 days.</li>
                 <li><strong>Shared addresses:</strong> up to 3 accounts may order to one address without any warning sign. An address that has already received a successful delivery counts as a trusted household and is never flagged for sharing.</li>
                 <li><strong>Same household (tick box):</strong> when a shared delivery address belongs to one family, ticking it with Mark False Alarm stops that address from being flagged for this account. Other accounts using the address are still checked.</li>
             </ul>
@@ -504,6 +600,10 @@ include 'templates/header.php';
     // Review endpoint (same folder as this page).
     const REVIEW_ENDPOINT = 'fraud_review.php';
 
+    // Appeal endpoint. Reason limits are the same as
+    // BLOOM_APPEAL_REASON_MIN_CHARS / MAX in fraud_appeal.php.
+    const APPEAL_ENDPOINT = 'fraud_appeal.php';
+
     // Translates free-text flags into a category. Checked top to bottom;
     // the first rule with a matching keyword wins, so order matters:
     // account actions go first because "Automated 30-Day Restriction ...
@@ -551,6 +651,7 @@ include 'templates/header.php';
     const FILTERS = [
         { key: 'all',              label: 'All Accounts' },
         { key: 'priority',         label: 'High Priority' },
+        { key: 'appeal',           label: 'Appeal Pending' },
         { key: 'flagged',          label: 'Flagged Only' },
         { key: 'account_takeover', label: 'Account Theft' },
         { key: 'payment_fraud',    label: 'Payment Fraud' },
@@ -568,6 +669,9 @@ include 'templates/header.php';
     let openLogOrders = [];     // that customer's loaded orders
     let openLogHistory = null;  // that customer's server-computed history
     let decisionBusy = false;   // true while a decision is being saved
+    let pendingAppeals = {};    // uid -> pending appeal document (live)
+    let openAppealUid = null;   // whose appeal the appeal window is showing
+    let appealBusy = false;     // true while an appeal decision is being saved
 
     /* =====================================================================
      * 3. SMALL HELPERS
@@ -806,6 +910,7 @@ include 'templates/header.php';
     function matchesFilter(account) {
         if (activeFilter === 'all') return true;
         if (activeFilter === 'priority') return isHighPriority(account);
+        if (activeFilter === 'appeal') return !!pendingAppeals[account.id];
         if (activeFilter === 'flagged') return account.state !== 'clear';
         return (account.counts[activeFilter] || 0) > 0;
     }
@@ -813,6 +918,25 @@ include 'templates/header.php';
     function matchesSearch(account, term) {
         if (!term) return true;
         return account.name.toLowerCase().includes(term) || account.id.toLowerCase().includes(term);
+    }
+
+    // The pending appeal, shown right under the customer's name. Used on the
+    // account card AND at the top of the Fraud Activity Log window.
+    // Empty string when this customer has no pending appeal.
+    function buildInlineAppeal(uid) {
+        const appeal = pendingAppeals[uid];
+        if (!appeal) return '';
+        const text = String(appeal.message || '');
+        const preview = text.length > 220 ? text.slice(0, 220).trim() + '…' : text;
+        return `
+        <div class="appeal-inline">
+            <div class="appeal-inline-head">
+                <span class="appeal-inline-label"><i class="fa-solid fa-envelope-open-text mr-1"></i>Customer appeal</span>
+                <button type="button" class="appeal-open-btn" data-action="open-appeal" data-uid="${escapeHtml(uid)}">Review appeal</button>
+            </div>
+            <p class="appeal-inline-text">${escapeHtml(preview)}</p>
+            <p class="appeal-inline-meta">Sent ${escapeHtml(formatTimestamp(appeal.submittedAt))}</p>
+        </div>`;
     }
 
     function buildReviewLine(review) {
@@ -855,11 +979,13 @@ include 'templates/header.php';
                         <h3 class="brand-font text-2xl font-black text-gray-800">${displayName}</h3>
                         <span class="risk-badge ${stateMeta.badge}">${stateMeta.label}</span>
                         ${levelBadge}
+                        ${pendingAppeals[a.id] ? '<span class="appeal-chip"><i class="fa-solid fa-envelope-open-text"></i>Appeal pending</span>' : ''}
                     </div>
                     <p class="text-xs font-mono text-gray-400">UID: ${escapeHtml(a.id)}</p>
                     ${restrictedUntil}
                     ${buildCodLine(a)}
                     ${buildReviewLine(a.review)}
+                    ${buildInlineAppeal(a.id)}
                 </div>
                 <div class="flex-1" style="max-width: 420px; width: 100%;">
                     <p class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Recorded Activity Types</p>
@@ -908,10 +1034,11 @@ include 'templates/header.php';
         return err;
     }
 
-    // POSTs to fraud_review.php with the admin's Firebase ID token.
+    // POSTs to fraud_review.php (or another endpoint, such as the appeal
+    // one) with the admin's Firebase ID token.
     // Resolves with the JSON body on success; throws an Error with .code
     // (server code, or NETWORK / BAD_RESPONSE / NO_SESSION) otherwise.
-    async function callFraudReview(payload) {
+    async function callFraudReview(payload, endpoint = REVIEW_ENDPOINT) {
         const user = firebase.auth().currentUser;
         if (!user) {
             throw reviewError('Your session is not ready yet. Please refresh the page and try again.', 'NO_SESSION');
@@ -920,7 +1047,7 @@ include 'templates/header.php';
 
         let response;
         try {
-            response = await fetch(REVIEW_ENDPOINT, {
+            response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                 body: JSON.stringify(payload)
@@ -929,11 +1056,22 @@ include 'templates/header.php';
             throw reviewError('Could not reach the server. Please check your connection and try again.', 'NETWORK');
         }
 
+        // Read the reply as TEXT first, then parse it. If the server sent
+        // something that is not JSON (a PHP error, a hosting error page, an
+        // empty reply), show the HTTP status and a short preview so the real
+        // cause is visible. The full reply also goes to the browser console.
         let data;
+        const rawText = await response.text();
         try {
-            data = await response.json();
+            data = JSON.parse(rawText);
         } catch (e) {
-            throw reviewError('The server returned an unexpected response. Please try again.', 'BAD_RESPONSE');
+            console.error('Unexpected reply from ' + endpoint + ' (HTTP ' + response.status + '):\n' + rawText);
+            const preview = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+            throw reviewError(
+                'The server returned an unexpected response (HTTP ' + response.status + '). '
+                + (preview ? 'Server said: "' + preview + '"' : 'The reply was empty.'),
+                'BAD_RESPONSE'
+            );
         }
 
         if (!data || data.success !== true) {
@@ -945,6 +1083,12 @@ include 'templates/header.php';
     /* =====================================================================
      * 7. FRAUD ACTIVITY LOG MODAL: SUMMARY, ACTIVITY, ORDERS
      * =================================================================== */
+
+    // Pending appeal at the top of the log window, under the name.
+    function renderLogAppeal() {
+        const box = document.getElementById('fhAppeal');
+        box.innerHTML = openLogUid ? buildInlineAppeal(openLogUid) : '';
+    }
 
     function renderRiskSummary(account) {
         const el = document.getElementById('fhRiskSummary');
@@ -1243,6 +1387,172 @@ include 'templates/header.php';
     }
 
     /* =====================================================================
+     * 9b. RESTRICTION APPEALS
+     *
+     * Data flow:
+     *   customer -> fraud_appeal.php (submit) -> fraud_appeals/{uid}
+     *   fraud_appeals (pending)  -> live listener below -> this panel
+     *   admin decision           -> fraud_appeal.php (decide) -> the customer
+     *   document, the appeal and the audit log change in ONE transaction
+     * =================================================================== */
+
+    function formatTimestamp(ts) {
+        return ts && ts.toDate ? ts.toDate().toLocaleString() : '—';
+    }
+
+    // Newest appeals last in time = oldest first, so nobody waits forever.
+    function sortedPendingAppeals() {
+        return Object.values(pendingAppeals).sort((a, b) =>
+            (a.submittedAt && a.submittedAt.toMillis ? a.submittedAt.toMillis() : 0)
+            - (b.submittedAt && b.submittedAt.toMillis ? b.submittedAt.toMillis() : 0));
+    }
+
+    // Appeals are a fraud view, so the customer's name stays MASKED with
+    // asterisks (same maskCustomerName() as the monitoring cards). The UID
+    // shown in the appeal window identifies the account without exposing
+    // the name.
+    function appealDisplayName(appeal) {
+        const account = accountIndex[appeal.uid];
+        const realName = (account && account.name) || appeal.customerName || '';
+        return maskCustomerName(realName);
+    }
+
+    function renderAppealsPanel() {
+        const panel = document.getElementById('appealsPanel');
+        const list = sortedPendingAppeals();
+        panel.style.display = list.length > 0 ? 'block' : 'none';
+        document.getElementById('appealsCount').textContent = list.length + ' waiting';
+
+        document.getElementById('appealsList').innerHTML = list.map(appeal => {
+            const text = String(appeal.message || '');
+            const preview = text.length > 220 ? text.slice(0, 220).trim() + '…' : text;
+            return `
+            <div class="appeal-item">
+                <div class="appeal-item-main">
+                    <p class="appeal-item-name">${escapeHtml(appealDisplayName(appeal))}</p>
+                    <p class="appeal-item-meta">Sent ${escapeHtml(formatTimestamp(appeal.submittedAt))} &bull; Restricted until ${escapeHtml(appeal.restrictedUntil && appeal.restrictedUntil.toDate ? appeal.restrictedUntil.toDate().toLocaleDateString() : '—')}</p>
+                    <p class="appeal-item-text">${escapeHtml(preview)}</p>
+                </div>
+                <button type="button" class="appeal-open-btn" data-action="open-appeal" data-uid="${escapeHtml(appeal.uid)}">Review appeal</button>
+            </div>`;
+        }).join('');
+    }
+
+    function renderAppealSummary() {
+        const appeal = openAppealUid ? pendingAppeals[openAppealUid] : null;
+        if (!appeal) return;
+        const account = accountIndex[openAppealUid];
+
+        const level = appeal.riskLevelAtAppeal && RISK_LEVELS[appeal.riskLevelAtAppeal] ? RISK_LEVELS[appeal.riskLevelAtAppeal] : null;
+        const codes = Array.isArray(appeal.fraudCodesAtAppeal) ? appeal.fraudCodesAtAppeal : [];
+
+        document.getElementById('appealTitle').textContent = 'Restriction Appeal — ' + appealDisplayName(appeal);
+        document.getElementById('appealUid').textContent = 'UID: ' + appeal.uid;
+        document.getElementById('appealMessage').textContent = appeal.message || '';
+        document.getElementById('appealSummary').innerHTML = `
+            <div class="flex flex-wrap items-center gap-2">
+                ${level ? `<span class="risk-badge ${level.badge}">${escapeHtml(level.label)}</span>` : ''}
+                ${typeof appeal.riskScoreAtAppeal === 'number' ? `<span class="score-pill">Score ${appeal.riskScoreAtAppeal} / ${SCORE_MAX}</span>` : ''}
+                ${account && account.state === 'restricted' ? '<span class="risk-badge risk-high">Still restricted</span>' : '<span class="risk-badge risk-low">No longer restricted</span>'}
+            </div>
+            <p class="fh-meta">Sent ${escapeHtml(formatTimestamp(appeal.submittedAt))} &bull; Restricted until ${escapeHtml(appeal.restrictedUntil && appeal.restrictedUntil.toDate ? appeal.restrictedUntil.toDate().toLocaleDateString() : '—')} &bull; Appeal #${escapeHtml(appeal.appealCount || 1)}</p>
+            <p class="fh-meta">Warning signs at the time: ${codes.length ? escapeHtml(codes.join(', ')) : 'none recorded'}</p>`;
+    }
+
+    function setAppealMessage(text, kind) {
+        const el = document.getElementById('appealDecisionMsg');
+        el.textContent = text || '';
+        el.className = 'fh-decision-msg' + (kind ? ' ' + kind : '');
+    }
+
+    function updateAppealReasonCount() {
+        const length = document.getElementById('appealReason').value.trim().length;
+        document.getElementById('appealReasonCount').textContent = `${length} / ${REASON_MAX_CHARS}${length < REASON_MIN_CHARS ? ` (min ${REASON_MIN_CHARS})` : ''}`;
+    }
+
+    // Buttons stay disabled until the reason is long enough and nothing is
+    // being saved. Never re-renders the textarea.
+    function renderAppealControls() {
+        const ready = !!openAppealUid && !!pendingAppeals[openAppealUid] && !appealBusy;
+        const reasonOk = document.getElementById('appealReason').value.trim().length >= REASON_MIN_CHARS;
+        document.getElementById('appealLift').disabled = !(ready && reasonOk);
+        document.getElementById('appealKeep').disabled = !(ready && reasonOk);
+    }
+
+    function openAppealModal(uid) {
+        if (!pendingAppeals[uid]) return;
+        openAppealUid = uid;
+        appealBusy = false;
+        document.getElementById('appealReason').value = '';
+        updateAppealReasonCount();
+        setAppealMessage('', '');
+        renderAppealSummary();
+        renderAppealControls();
+        document.getElementById('appealOverlay').classList.add('open');
+    }
+
+    function closeAppealModal() {
+        if (appealBusy) return;
+        openAppealUid = null;
+        document.getElementById('appealOverlay').classList.remove('open');
+    }
+
+    async function submitAppealDecision(decision) {
+        const uid = openAppealUid;
+        const appeal = uid ? pendingAppeals[uid] : null;
+        if (!appeal || appealBusy) return;
+
+        const reasonEl = document.getElementById('appealReason');
+        const reason = reasonEl.value.trim();
+        if (reason.length < REASON_MIN_CHARS) {
+            setAppealMessage(`Please write at least ${REASON_MIN_CHARS} characters explaining your decision.`, 'error');
+            return;
+        }
+
+        const question = decision === 'approve'
+            ? 'Lift this restriction?\n\nThe customer will be able to order again right away, with any payment method. Their warning signs stay on record, and new suspicious activity is still recorded.'
+            : 'Keep this restriction?\n\nThe customer still cannot order. They can send a new appeal after 24 hours, and the restriction ends by itself after 30 days.';
+        if (!confirm(question)) return;
+
+        appealBusy = true;
+        setAppealMessage('Saving decision...', 'info');
+        renderAppealControls();
+
+        try {
+            const data = await callFraudReview({
+                action: 'decide',
+                uid,
+                decision,
+                reason,
+                seenAppealCount: Number(appeal.appealCount || 1)
+            }, APPEAL_ENDPOINT);
+
+            reasonEl.value = '';
+            updateAppealReasonCount();
+            if (decision === 'approve') {
+                const extras = data.allowListedDevices > 0 ? ` (allowed on ${data.allowListedDevices} banned device(s))` : '';
+                setAppealMessage(`Appeal approved. Restriction lifted${extras}.`, 'success');
+            } else {
+                setAppealMessage('Appeal denied. The restriction stays.', 'success');
+            }
+            // The live listener removes the appeal from the panel; close the
+            // window a moment later so the message can be read.
+            appealBusy = false;
+            setTimeout(() => { if (openAppealUid === uid) closeAppealModal(); }, 1400);
+        } catch (err) {
+            setAppealMessage(err.message, 'error');
+            appealBusy = false;
+            // Someone else already decided it, or the customer re-appealed:
+            // the live list refreshes by itself, so just close this window.
+            if (err.code === 'ALREADY_DECIDED' || err.code === 'APPEAL_CHANGED') {
+                setTimeout(() => { if (openAppealUid === uid) closeAppealModal(); }, 2200);
+            }
+        } finally {
+            renderAppealControls();
+        }
+    }
+
+    /* =====================================================================
      * 10. OPENING / CLOSING THE LOG
      * =================================================================== */
 
@@ -1274,6 +1584,7 @@ include 'templates/header.php';
         setDecisionMessage('', '');
 
         renderRiskSummary(account);
+        renderLogAppeal();
         renderAccountActivity(account);
         renderDecisionControls();
         document.getElementById('fraudHistoryOverlay').classList.add('open');
@@ -1323,6 +1634,11 @@ include 'templates/header.php';
         // One click listener for every card (event delegation), so the
         // "open log" buttons still work after the grid is re-drawn.
         document.getElementById('fraudAnalyticsGrid').addEventListener('click', e => {
+            const appealBtn = e.target.closest('[data-action="open-appeal"]');
+            if (appealBtn) {
+                openAppealModal(appealBtn.dataset.uid);
+                return;
+            }
             const btn = e.target.closest('[data-action="open-log"]');
             if (!btn) return;
             openFraudActivityLog(btn.dataset.uid);
@@ -1338,6 +1654,33 @@ include 'templates/header.php';
 
         document.getElementById('fraudAccountSearch').addEventListener('input', renderGrid);
         document.getElementById('fhFlaggedOnly').addEventListener('change', renderOrderLog);
+
+        // Appeals: "Review appeal" buttons (rendered dynamically), the
+        // appeal window's reason box and its two decision buttons.
+        document.getElementById('appealsList').addEventListener('click', e => {
+            const btn = e.target.closest('[data-action="open-appeal"]');
+            if (btn) openAppealModal(btn.dataset.uid);
+        });
+        // The appeal shown under the name inside the log window (rendered dynamically).
+        document.getElementById('fhAppeal').addEventListener('click', e => {
+            const btn = e.target.closest('[data-action="open-appeal"]');
+            if (btn) openAppealModal(btn.dataset.uid);
+        });
+        document.getElementById('appealReason').addEventListener('input', () => {
+            updateAppealReasonCount();
+            renderAppealControls();
+        });
+        document.getElementById('appealLift').addEventListener('click', () => submitAppealDecision('approve'));
+        document.getElementById('appealKeep').addEventListener('click', () => submitAppealDecision('deny'));
+        document.getElementById('appealOpenLog').addEventListener('click', () => {
+            const uid = openAppealUid;
+            if (!uid || appealBusy) return;
+            closeAppealModal();
+            openFraudActivityLog(uid);
+        });
+        document.getElementById('appealOverlay').addEventListener('click', e => {
+            if (e.target.id === 'appealOverlay') closeAppealModal();
+        });
 
         // History "Try again" button (rendered dynamically).
         document.getElementById('fhHistory').addEventListener('click', e => {
@@ -1362,8 +1705,36 @@ include 'templates/header.php';
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
                 if (!decisionBusy) closeFraudActivityLog();
+                closeAppealModal();
                 closeMethodologyModal();
             }
+        });
+
+        // Live listener for PENDING appeals only. Runs once now, then again
+        // whenever a customer sends an appeal or an admin decides one.
+        // Needs the fraud_appeals rule in firestore.rules (admins can read).
+        db.collection('fraud_appeals').where('status', '==', 'pending').onSnapshot(snap => {
+            pendingAppeals = {};
+            snap.forEach(doc => { pendingAppeals[doc.id] = { uid: doc.id, ...doc.data() }; });
+            renderAppealsPanel();
+            renderGrid(); // refreshes the "Appeal pending" chips + under-name appeals
+            renderLogAppeal();
+            if (openAppealUid) {
+                if (pendingAppeals[openAppealUid]) {
+                    renderAppealSummary();
+                } else if (!appealBusy) {
+                    // Decided elsewhere (or just now by this admin).
+                    closeAppealModal();
+                }
+                renderAppealControls();
+            }
+        }, err => {
+            console.error('Could not load restriction appeals: ', err);
+            const panel = document.getElementById('appealsPanel');
+            panel.style.display = 'block';
+            document.getElementById('appealsCount').textContent = 'error';
+            document.getElementById('appealsList').innerHTML =
+                '<p class="appeals-sub" style="color:#b91c1c;">Could not load appeals (' + escapeHtml(err.message) + '). Deploy the updated firestore.rules, then refresh.</p>';
         });
 
         // Live listener: runs once now, then again every time ANY customer
@@ -1393,6 +1764,8 @@ include 'templates/header.php';
 
             renderCounters();
             renderGrid();
+            renderAppealsPanel();
+            if (openAppealUid) renderAppealSummary();
 
             // If the log is open for someone whose data just changed,
             // refresh what depends on the customer document.

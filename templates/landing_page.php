@@ -151,6 +151,13 @@ $isLoggedIn = $landingUserId !== null;
             50% { transform: translateY(-10px); }
             100% { transform: translateY(0px); }
         }
+
+        /* --- Download modal: fade + pop-in when opened --- */
+        .modal-pop { animation: modalPop 0.3s ease-out; }
+        @keyframes modalPop {
+            from { opacity: 0; transform: translateY(20px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
     </style>
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -166,7 +173,7 @@ $isLoggedIn = $landingUserId !== null;
             <img src="../assets/images/asset.jpg" alt="BLOOM" class="h-8 object-contain">
             <h1 class="text-xl font-black italic tracking-tighter text-[#363949] hidden sm:block">BLOOM</h1>
         </div>
-        <div class="hidden md:flex gap-10 text-[11px] font-extrabold uppercase tracking-[2px] text-gray-400">
+        <div class="hidden md:flex gap-10 text-[11px] font-extrabold uppercase tracking-[2px] text-gray-400 items-center">
             <a href="landing_page.php" class="text-[#7B79F2]">Home</a>
             <a href="#about" class="hover:text-[#7B79F2] transition-colors">About</a>
             <a href="shop.php" class="hover:text-[#7B79F2] transition-colors">Shop</a>
@@ -179,8 +186,9 @@ $isLoggedIn = $landingUserId !== null;
                 <a href="my_orders.php" onclick="window.bloomRequireLogin({ action: 'view_orders' }, 'Please log in to view your orders.'); return false;" class="hover:text-[#7B79F2] transition-colors">My Orders</a>
                 <a href="../index.php" class="hover:text-[#7B79F2] transition-colors">Login</a>
                 <a href="../register.php" class="px-6 py-2 bg-[#7B79F2] text-white rounded-full hover:bg-[#5a58d1] transition-all">Join Now</a>
-                 <a href="#" class="px-6 py-2 bg-[#7B79F2] text-white rounded-full hover:bg-[#5a58d1] transition-all">Download</a>
             <?php endif; ?>
+            <!-- Download is shown to EVERYONE (guests and logged-in customers) -->
+            <button type="button" onclick="openDownloadModal()" class="px-6 py-2 bg-[#7B79F2] text-white rounded-full hover:bg-[#5a58d1] transition-all uppercase tracking-[2px] font-extrabold text-[11px]">Download</button>
         </div>
     </div>
 </nav>
@@ -191,9 +199,13 @@ $isLoggedIn = $landingUserId !== null;
             <span class="inline-block px-4 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold uppercase tracking-widest mb-6">New Collection 2026</span>
             <h2 class="text-7xl font-black uppercase tracking-tighter mb-6 leading-[0.9]">Elegance in <br><span class="text-[#7B79F2]">Every Bloom</span></h2>
             <p class="text-lg font-medium text-gray-200 mb-10 max-w-lg">Experience the art of floral design with our premium, hand-picked arrangements delivered straight to your doorstep.</p>
-            <div class="flex gap-4">
+            <div class="flex flex-wrap gap-4">
                 <a href="shop.php" class="btn-primary">Shop Collection</a>
                 <a href="#featured" class="px-8 py-4 border-2 border-white/30 rounded-full font-bold hover:bg-white hover:text-gray-900 transition-all">View Featured</a>
+                <!-- Phones only: the nav is hidden on small screens, so this is their way in -->
+                <button type="button" onclick="openDownloadModal()" class="md:hidden px-8 py-4 bg-white text-[#7B79F2] rounded-full font-bold hover:bg-[#eef2ff] transition-all">
+                    <i class="fa-solid fa-mobile-screen-button mr-2"></i>Get the App
+                </button>
             </div>
         </div>
     </div>
@@ -327,7 +339,79 @@ $isLoggedIn = $landingUserId !== null;
     </div>
 </footer>
 
+<!-- ============ DOWNLOAD MODAL (opened by the Download / Get the App buttons) ============ -->
+<div id="download-modal"
+     class="fixed inset-0 z-[100] hidden items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-labelledby="download-title"
+     onclick="if (event.target === this) closeDownloadModal()">
+    <div class="modal-pop relative bg-white rounded-[40px] shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+
+        <!-- Close (X) button -->
+        <button type="button" onclick="closeDownloadModal()" aria-label="Close"
+                class="absolute top-5 right-5 z-10 w-10 h-10 rounded-full bg-white/90 text-gray-400 hover:text-[#7B79F2] hover:bg-[#eef2ff] flex items-center justify-center transition-all shadow">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+
+        <div class="grid grid-cols-1 md:grid-cols-2">
+
+            <!-- LEFT: app preview photo -->
+            <div class="bg-[#eef2ff] flex items-center justify-center p-8 md:rounded-l-[40px] rounded-t-[40px] md:rounded-tr-none">
+                   <img src="../assets/images/sample.png" alt="BLOOM app preview"                     class="w-full max-h-[320px] md:max-h-[420px] object-contain drop-shadow-xl"
+                     onerror="this.style.display='none'">
+            </div>
+
+            <!-- RIGHT: text, QR code, download button -->
+            <div class="p-8 md:p-10 flex flex-col justify-center text-center md:text-left">
+                <span class="text-[#7B79F2] font-black uppercase tracking-widest text-xs">Android App</span>
+                <h3 id="download-title" class="text-3xl font-black uppercase tracking-tighter text-gray-800 mt-2 mb-3">Get BLOOM on your phone</h3>
+                <p class="text-gray-400 text-sm font-medium leading-relaxed mb-6">
+                    Design bouquets in AR, track your orders, and shop anywhere.
+                </p>
+
+                <!-- QR is only useful on a computer, so phones don't see it -->
+                <div class="hidden md:flex items-center gap-4 mb-6">
+                    <img src="../assets/images/qr.png" alt="QR code to download BLOOM"
+                         class="w-32 h-32 rounded-2xl border border-gray-100 p-2 bg-white"
+                         onerror="this.style.display='none'">
+                    <p class="text-xs font-bold uppercase tracking-widest text-gray-400 leading-relaxed">
+                        Scan with your<br>phone camera<br>to download
+                    </p>
+                </div>
+
+                <!-- Direct download (the main action on phones) -->
+                <a href="../download/BLOOM.apk" download="BLOOM.apk"
+                   class="btn-primary text-center text-sm uppercase tracking-widest">
+                    <i class="fa-brands fa-android mr-2"></i>Download APK
+                </a>
+                <p class="text-[11px] text-gray-300 font-semibold mt-4">
+                    Android only &bull; <a href="../download/download.html" class="underline hover:text-[#7B79F2]">How to install</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+    // ---------- Download modal controls ----------
+    function openDownloadModal() {
+        const modal = document.getElementById('download-modal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.style.overflow = 'hidden';   // stop the page scrolling behind the pop-up
+    }
+
+    function closeDownloadModal() {
+        const modal = document.getElementById('download-modal');
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        document.body.style.overflow = '';          // give scrolling back
+    }
+
+    // Pressing the Escape key also closes the pop-up
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeDownloadModal();
+    });
+
     <?php
         $configPath = __DIR__ . '/../firebase-applet-config.json';
         if (file_exists($configPath)) {

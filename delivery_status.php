@@ -1,6 +1,17 @@
 <?php 
 /**
  * BLOOMINOUS - Delivery Status Monitoring (Firebase Spoke)
+ *
+ * Read-only. This page never writes to `orders` — it only displays each online
+ * order's current delivery status and lets staff view the rider's uploaded Proof
+ * of Delivery photo. Status changes (Pending -> Processing -> Prepared -> In Transit
+ * -> Confirmed) happen from Order Management, which is the single place that owns
+ * order status for both online and walk-in orders. Keeping the write path in one
+ * place is what removed the duplicate status dropdown that used to live here too.
+ *
+ * THEME: colors read the theme variables from templates/header.php, and an explicit
+ * dark block at the bottom of the <style> uses the same palette, so this page stays
+ * dark even if the shared stylesheet fails to load.
  */
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -20,57 +31,70 @@ include 'templates/header.php';
     
     .header-area { margin-bottom: 3.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; }
     
-    .table-card { background: var(--surface); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color); overflow: hidden; }
+    .table-card { background: var(--surface, #fff); border-radius: 35px; padding: 0; box-shadow: 0 10px 30px rgba(0,0,0,0.02); border: 1px solid var(--border-color, #f0f0f0); overflow: hidden; }
 
     table { width: 100%; border-collapse: collapse; }
-    th { color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; padding: 25px 20px; border-bottom: 1px solid var(--border-color); text-align: left; letter-spacing: 1px; background: var(--surface-alt); }
-    td { padding: 20px; color: var(--text-main); font-size: 0.9rem; border-bottom: 1px solid #f8f9fa; transition: 0.2s; font-weight: 500; }
-    tr:hover td { background: var(--surface-alt); }
+    th { color: var(--text-light); font-size: 0.75rem; text-transform: uppercase; font-weight: 800; padding: 25px 20px; border-bottom: 1px solid var(--border-color, #f0f0f0); text-align: left; letter-spacing: 1px; background: var(--surface-alt, #fafafa); }
+    td { padding: 20px; color: var(--text-main); font-size: 0.9rem; border-bottom: 1px solid var(--border-color, #f8f9fa); transition: 0.2s; font-weight: 500; }
+    tr:hover td { background: var(--surface-alt, #fafafa); }
 
     .badge { padding: 6px 16px; border-radius: 50px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-    .badge-pending { background: #fff9e6; color: #ffbb55; }
-    .badge-transit { background: rgba(123, 121, 242, 0.1); color: var(--secondary); }
-    .badge-confirmed { background: rgba(46, 204, 113, 0.1); color: #2ecc71; }
+    .badge-pending { background: rgba(245, 158, 11, 0.14); color: #F59E0B; }
+    .badge-prepared { background: rgba(0, 206, 209, 0.14); color: #00b3b6; }
+    .badge-transit { background: rgba(123, 121, 242, 0.14); color: var(--secondary); }
+    .badge-confirmed { background: rgba(46, 204, 113, 0.14); color: #2ecc71; }
+    .badge-cancelled { background: rgba(150, 150, 150, 0.15); color: #999; }
 
     .order-id { font-family: 'Inter', sans-serif; font-weight: 900; color: var(--primary); font-size: 0.85rem; letter-spacing: 0.5px; }
-    .order-date { color: #7d8da1; }
 
-    .no-pod { color: #ccc; font-size: 0.78rem; font-weight: 700; font-style: italic; }
-    .pod-thumb-btn { 
-        width: 50px; height: 50px; border-radius: 12px; object-fit: cover; cursor: pointer; 
-        border: 2px solid transparent; transition: 0.3s; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-    .pod-thumb-btn:hover { transform: scale(1.1); border-color: var(--primary); }
+    .no-pod { color: var(--text-light); font-size: 0.78rem; font-weight: 700; font-style: italic; }
+    .pod-thumb-btn { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; cursor: pointer; border: 1px solid var(--border-color, #f0f0f0); transition: 0.2s; }
+    .pod-thumb-btn:hover { transform: scale(1.08); border-color: var(--primary); }
 
-    #podViewOverlay { 
-        display: none; position: fixed; inset: 0; background: rgba(15,15,15,0.85); 
-        backdrop-filter: blur(5px); z-index: 600; align-items: center; justify-content: center; padding: 20px; 
-    }
+    #podViewOverlay { display: none; position: fixed; inset: 0; background: rgba(20,20,20,0.75); z-index: 600; align-items: center; justify-content: center; padding: 20px; }
     #podViewOverlay.open { display: flex; }
-    #podViewCard { 
-        background: var(--surface); border-radius: 24px; padding: 1.5rem; max-width: 500px; width: 100%; 
-        text-align: center; box-shadow: 0 30px 60px rgba(0,0,0,0.3); 
-    }
-    #podViewCard img { width: 100%; max-height: 60vh; object-fit: contain; border-radius: 16px; margin-bottom: 1rem; background: #000; }
-    #podViewMeta { font-size: 0.85rem; color: var(--text-light); font-weight: 600; margin-bottom: 1rem; line-height: 1.5; }
-    #podViewCard button { 
-        width: 100%; padding: 14px; border-radius: 14px; border: none; background: var(--primary); 
-        color: white; font-weight: 800; cursor: pointer; transition: 0.2s;
-    }
-    #podViewCard button:hover { background: #d81b60; }
+    #podViewCard { background: var(--surface, #fff); color: var(--text-main); border: 1px solid var(--border-color, transparent); border-radius: 24px; padding: 1.5rem; max-width: 420px; width: 100%; text-align: center; }
+    #podViewCard img { width: 100%; border-radius: 16px; margin-bottom: 1rem; }
+    #podViewMeta { font-size: 0.8rem; color: var(--text-light); font-weight: 600; margin-bottom: 1rem; }
+    #podViewCard button { width: 100%; padding: 12px; border-radius: 14px; border: none; background: var(--surface-alt, #f5f5f5); color: var(--text-light); font-weight: 800; cursor: pointer; }
 
-    /* ============ DARK MODE ============ */
-    html[data-theme="dark"] .delivery-content td { border-bottom-color: var(--border-color); }
-    html[data-theme="dark"] .table-card { box-shadow: none; }
-    html[data-theme="dark"] .badge-pending { background: rgba(255, 187, 85, 0.15); color: #fcd34d; }
-    html[data-theme="dark"] .badge-confirmed { background: rgba(46, 204, 113, 0.15); color: #6ee7b7; }
-    html[data-theme="dark"] .order-date, html[data-theme="dark"] .no-pod { color: var(--text-light); }
-    html[data-theme="dark"] #podViewCard { border: 1px solid var(--border-color); }
-    html[data-theme="dark"] .delivery-content :is(.text-gray-800, .text-gray-700) { color: var(--text-main); }
-    html[data-theme="dark"] .delivery-content :is(.text-gray-500, .text-gray-400, .text-gray-300, .text-muted) { color: var(--text-light); }
-    html[data-theme="dark"] .delivery-content .bg-white { background-color: var(--surface); }
-    html[data-theme="dark"] .delivery-content :is(.border-gray-50, .border-gray-100) { border-color: var(--border-color); }
-    html[data-theme="dark"] .delivery-content .shadow-sm { box-shadow: none; }
+    /* Tailwind classes used in the markup, re-pointed at the theme (both modes) */
+    .delivery-content .text-gray-800 { color: var(--text-main); }
+    .delivery-content .text-gray-400 { color: var(--text-light); }
+    .delivery-content .bg-white { background-color: var(--surface, #fff); color: var(--text-main); }
+    .delivery-content .border-gray-100 { border-color: var(--border-color, #f0f0f0); }
+
+    /* =====================================================================
+       DARK MODE — explicit and !important on purpose (same palette header.php
+       defines: card #2A241D, alt #221D17, border #3F382F, text #EAE6DF, muted #A0998F).
+       ===================================================================== */
+    html[data-theme="dark"] .table-card,
+    html[data-theme="dark"] #podViewCard {
+        background: #2A241D !important;
+        border-color: #3F382F !important;
+        box-shadow: none !important;
+        color: #EAE6DF !important;
+    }
+    html[data-theme="dark"] .table-card th { background: #221D17 !important; color: #A0998F !important; border-bottom-color: #3F382F !important; }
+    html[data-theme="dark"] .table-card td { background: transparent !important; color: #EAE6DF !important; border-bottom-color: #3F382F !important; }
+    html[data-theme="dark"] .table-card tr:hover td { background: #221D17 !important; }
+
+    html[data-theme="dark"] .delivery-content .bg-white { background-color: #2A241D !important; border-color: #3F382F !important; color: #EAE6DF !important; }
+    html[data-theme="dark"] .delivery-content .border-gray-100 { border-color: #3F382F !important; }
+    html[data-theme="dark"] .delivery-content .text-gray-800 { color: #EAE6DF !important; }
+    html[data-theme="dark"] .delivery-content .text-gray-400 { color: #A0998F !important; }
+    html[data-theme="dark"] .delivery-content .shadow-sm { box-shadow: none !important; }
+
+    html[data-theme="dark"] .badge-pending   { background: rgba(245,158,11,0.16) !important; color: #F59E0B !important; }
+    html[data-theme="dark"] .badge-prepared  { background: rgba(0,206,209,0.16) !important; color: #00c4c7 !important; }
+    html[data-theme="dark"] .badge-transit   { background: rgba(123,121,242,0.18) !important; color: #8b89f5 !important; }
+    html[data-theme="dark"] .badge-confirmed { background: rgba(46,204,113,0.16) !important; color: #2ecc71 !important; }
+    html[data-theme="dark"] .badge-cancelled { background: rgba(150,150,150,0.18) !important; color: #9a9a9a !important; }
+
+    html[data-theme="dark"] .no-pod,
+    html[data-theme="dark"] #podViewMeta { color: #A0998F !important; }
+    html[data-theme="dark"] .pod-thumb-btn { border-color: #3F382F !important; }
+    html[data-theme="dark"] #podViewCard button { background: #221D17 !important; color: #A0998F !important; }
 </style>
 
 <main class="delivery-content">
@@ -109,9 +133,7 @@ include 'templates/header.php';
     <div id="podViewCard">
         <img id="podViewImg" src="" alt="Delivery proof">
         <div id="podViewMeta"></div>
-        <button type="button" onclick="closePodViewer()">
-            <i class="fa-solid fa-xmark mr-2"></i> Close
-        </button>
+        <button type="button" onclick="closePodViewer()">Close</button>
     </div>
 </div>
 
@@ -119,6 +141,8 @@ include 'templates/header.php';
     document.addEventListener('DOMContentLoaded', () => {
         const deliveryData = document.getElementById('deliveryData');
 
+        // Walk-in orders are handed over in person and have no delivery leg, so this
+        // monitor only ever shows online (type 'WEB') orders.
         db.collection('orders').where('branchId', '==', window.currentBranch).onSnapshot(snap => {
             const onlineDocs = snap.docs.filter(doc => (doc.data().type || 'WEB') !== 'POS');
 
@@ -139,10 +163,15 @@ include 'templates/header.php';
                 const id = doc.id;
                 const status = (o.status || 'pending').toLowerCase();
 
+                // Displayed status mirrors exactly what Order Management can set:
+                // pending, processing, prepared, in transit, confirmed (+ customer-cancelled).
+                // Anything else (older records) falls back to the closest current meaning.
                 let displayStatus;
                 if (status === 'confirmed' || status === 'delivered' || status === 'completed') displayStatus = 'Confirmed';
                 else if (status === 'in transit') displayStatus = 'In Transit';
+                else if (status === 'prepared') displayStatus = 'Prepared';
                 else if (status === 'processing') displayStatus = 'Processing';
+                else if (status === 'cancelled') displayStatus = 'Cancelled';
                 else displayStatus = 'Pending';
 
                 const customerName = o.customer_name || o.customerName || 'Guest Customer';
@@ -150,30 +179,22 @@ include 'templates/header.php';
 
                 let badgeClass = 'badge-pending';
                 if (displayStatus === 'In Transit' || displayStatus === 'Processing') badgeClass = 'badge-transit';
+                if (displayStatus === 'Prepared') badgeClass = 'badge-prepared';
                 if (displayStatus === 'Confirmed') badgeClass = 'badge-confirmed';
+                if (displayStatus === 'Cancelled') badgeClass = 'badge-cancelled';
 
-                // CHANGED: Check for both podPhotoUrl (new) and proofOfDeliveryPhoto (old)
-                const photoUrl = o.podPhotoUrl || o.proofOfDeliveryPhoto;
-                let podCell = `<span class="no-pod">Not yet uploaded</span>`;
-
-                if (photoUrl) {
-                    const safeUrl = photoUrl.replace(/'/g, "\\'");
-                    const safeCourier = (o.courierName || '').replace(/'/g, "\\'");
-                    const safeRecipient = (o.podRecipient || '').replace(/'/g, "\\'");
-                    
-                    podCell = `
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <img src="${photoUrl}" class="pod-thumb-btn" onclick="viewPodPhoto('${safeUrl}', '${safeCourier}', '${safeRecipient}')" title="View Proof of Delivery">
-                            <span style="font-size:0.7rem; font-weight:700; color:#2ecc71;"><i class="fa-solid fa-check-circle"></i> Verified</span>
-                        </div>
-                    `;
+                let podCell;
+                if (o.podPhotoUrl) {
+                    podCell = `<img src="${o.podPhotoUrl}" class="pod-thumb-btn" onclick="viewPodPhoto('${o.podPhotoUrl.replace(/'/g, "\\'")}', '${(o.courierName || '').replace(/'/g, "\\'")}', '${(o.podRecipient || '').replace(/'/g, "\\'")}')" title="View delivery photo">`;
+                } else {
+                    podCell = `<span class="no-pod">Not yet uploaded</span>`;
                 }
 
                 html += `
                 <tr>
                     <td><span class="order-id">#${id.substring(0, 8).toUpperCase()}</span></td>
                     <td style="font-weight: 600;">${customerName}</td>
-                    <td class="order-date">${date}</td>
+                    <td style="color: var(--text-light);">${date}</td>
                     <td><span class="badge ${badgeClass}">${displayStatus}</span></td>
                     <td>${podCell}</td>
                 </tr>
@@ -183,16 +204,13 @@ include 'templates/header.php';
         });
     });
 
+    // Clicking the POD thumbnail views the photo — read-only, never writes anything.
     function viewPodPhoto(photoUrl, courier, recipient) {
         document.getElementById('podViewImg').src = photoUrl;
         const metaParts = [];
-        if (courier) metaParts.push(`<strong>Courier:</strong> ${courier}`);
-        if (recipient) metaParts.push(`<strong>Received by:</strong> ${recipient}`);
-        
-        document.getElementById('podViewMeta').innerHTML = metaParts.length > 0 
-            ? metaParts.join('<br>') 
-            : 'No additional details on file.';
-            
+        if (courier) metaParts.push('Courier: ' + courier);
+        if (recipient) metaParts.push('Received by: ' + recipient);
+        document.getElementById('podViewMeta').innerText = metaParts.join(' · ') || 'No additional details on file.';
         document.getElementById('podViewOverlay').classList.add('open');
     }
 

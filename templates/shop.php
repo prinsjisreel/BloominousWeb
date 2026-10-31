@@ -41,6 +41,42 @@ $isLoggedIn = $user_id !== null;
     <script src="../assets/script/guest_gate.js"></script>
     <!-- Shared Firestore cart service (same data contract as BloominousApp) -->
     <script src="../assets/script/bloom_cart.js"></script>
+    <script>
+        // SAFETY NET: this page calls three helpers that live in guest_gate.js
+        // (bloomConsumeLoginIntent, bloomRequireLogin, bloomShowToast). If that
+        // file is missing, outdated, or served from an old browser cache, the
+        // very first call used to throw "... is not a function" and stop the
+        // whole page script — so products never loaded and the page sat on
+        // "Loading fresh flowers..." forever. Each stand-in below is only used
+        // when the real helper is NOT there; the real one always wins.
+        // The console warning names exactly what is missing, so the real cause
+        // (a bad guest_gate.js) can't hide behind a page that still works.
+        (function () {
+            const missing = [];
+
+            if (typeof window.bloomConsumeLoginIntent !== 'function') {
+                missing.push('bloomConsumeLoginIntent');
+                // No saved "what did the guest want" -> nothing to finish after login.
+                window.bloomConsumeLoginIntent = function () { return null; };
+            }
+            if (typeof window.bloomRequireLogin !== 'function') {
+                missing.push('bloomRequireLogin');
+                window.bloomRequireLogin = function (intent, message) {
+                    alert(message || 'Please log in to continue.');
+                    window.location.href = '../index.php';
+                };
+            }
+            if (typeof window.bloomShowToast !== 'function') {
+                missing.push('bloomShowToast');
+                window.bloomShowToast = function (message) { alert(message); };
+            }
+
+            if (missing.length) {
+                console.warn('guest_gate.js did not provide: ' + missing.join(', ')
+                    + '. Using stand-ins. Check that assets/script/guest_gate.js is the current version and the browser is not caching an old copy.');
+            }
+        })();
+    </script>
     <style>
         :root {
             --shop-accent: #f97316;   /* BLOOM orange (nav, stars, highlights) */
